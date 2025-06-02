@@ -26,6 +26,7 @@ build/
 
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints/
+*notebooks/
 
 # Log files and directories
 logs/
