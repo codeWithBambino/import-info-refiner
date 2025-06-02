@@ -1,0 +1,39 @@
+# Python virtual environment
+.import-info-refiner-env/
+import-info-refiner-env/
+
+# Important creds
+google.json
+
+# IDE and OS specific files
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*.swo
+
+# Python bytecode and compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Distribution / packaging
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Log files and directories
+logs/
+*.log
+
+# Temporary files
+data/manifests/cleaned/
+data/manifests/processing/
+data/manifests/raw/
+data/temp/
+*temp.py

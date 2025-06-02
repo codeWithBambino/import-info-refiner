@@ -1,0 +1,53 @@
+# Common business suffix abbreviations and expansions
+
+ABBREVIATIONS = {
+    "PVT": "PRIVATE",
+    "PVT.": "PRIVATE",
+    "PTE": "PRIVATE",
+    "PTE.": "PRIVATE",
+    "LTD": "LIMITED",
+    "LTD.": "LIMITED",
+    "LT.": "LIMITED",
+    "LT": "LIMITED",
+    "LIMITIED": "LIMITED",
+    "LLC": "LIMITED LIABILITY COMPANY",
+    " LLC": "LIMITED LIABILITY COMPANY",
+    "LLC ": "LIMITED LIABILITY COMPANY",
+    "L.L.C.": "LIMITED LIABILITY COMPANY",
+    "L L C": "LIMITED LIABILITY COMPANY",
+    "L LIMITED C": "LIMITED LIABILITY COMPANY",
+    "I.L.L.C.": "LIMITED LIABILITY COMPANY",
+    "IL.L.C.": "LIMITED LIABILITY COMPANY",
+    "ILL.C.": "LIMITED LIABILITY COMPANY",
+    "ILLC.": "LIMITED LIABILITY COMPANY",
+    "AUTOMANNUSA": "AUTOMANN USA",
+    "LLP": "LIMITED LIABILITY PARTNERSHIP",
+    "INC": "INCORPORATED",
+    "INCD": "INCORPORATED",
+    "INC.": "INCORPORATED",
+    "CO": "COMPANY",
+    "CO.": "COMPANY",
+    "CORP": "CORPORATION",
+    "INVESTMENTSL L C": "INVESTMENTS LIMITED LIABILITY COMPANY",
+    "INTERNATIONL": "INTERNATIONAL",
+    "CARSON S NUT BOLT AND TOOL": "CARSONS NUT BOLT AND TOOL COMPANY INCORPORATED",
+    "CHARLEY KNITWEARS": "CHARLEY KNITWEAR PRIVATE LIMITED",
+    "COMPAN": "COMPANY",
+    "CNCINDUSTRIESLTD": "CNC INDUSTRIES LIMITED",
+    "INTL": "INTERNATIONAL",
+    "TRANSPO": "TRANSPORT",
+    "TPT": "TRANSPORT",
+    "ILLC": "INTERNATIONAL LIMITED LIABILITY COMPANY",
+    "GMBH": "",
+}
+
+# Unwanted tokens to remove
+UNWANTED_TOKENS = [
+    "ATTN", "ATTN:", "C/O", "C\\O", "CARE OF", "℅", "ATTENTION", "ATTENTION:", "TO:"
+]
+
+GARBAGE_TOKENS = {
+    "house", "park", "colony", "point", "tower", "centre", "center", "star",
+    "block", "phase", "unit", "office", "lane", "road", "street", "avenue",
+    "nagar", "college", "opp"
+}
