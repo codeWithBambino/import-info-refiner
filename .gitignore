@@ -37,3 +37,4 @@ data/manifests/processing/
 data/manifests/raw/
 data/temp/
 *temp.py
+*.pdf
