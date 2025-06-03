@@ -26,6 +26,8 @@ from src.pipeline.party_standardizer import party_standardizer
 from src.pipeline.place_of_receipt_cleaner import standardize_place_of_receipt
 from src.pipeline.city_standardizer import apply_city_extraction
 
+from src.pipeline.hs_extractor import extract_hs_code 
+
 # Starting the file processing Life Cycle
 def pipeline(test_mode=False):
     start_time = time.time()  # Start timing
@@ -184,10 +186,11 @@ def pipeline(test_mode=False):
                     log_string=f"Step 4: Party Standardization for {raw_manifest_filename} - FAILURE. Error: {e}",
                     level="error"
                 )
+                continue # Skip to the next file (will execute outer finally)
 
             # Step 5: Place of Receipt Standardization
             try:
-                dataframe = standardize_place_of_receipt(dataframe, raw_manifest_filename)
+                dataframe = standardize_place_of_receipt(dataframe, "Place of Receipt", raw_manifest_filename)
                 log_message(
                     folder=PIPELINE_MAIN_PROCESS_FOLDER,
                     raw_manifest_filename=raw_manifest_filename,
@@ -211,6 +214,7 @@ def pipeline(test_mode=False):
                     log_string=f"Step 5: Place of Receipt Standardization for {raw_manifest_filename} - FAILURE. Error: {e}",
                     level="error"
                 )
+                continue # Skip to the next file (will execute outer finally)
 
             # Step 6: Extract Shipper City from address
             try:
@@ -218,18 +222,25 @@ def pipeline(test_mode=False):
                 log_message(
                     folder=PIPELINE_MAIN_PROCESS_FOLDER,
                     raw_manifest_filename=raw_manifest_filename,
-                    log_string=f"Step 6: City Extraction - SUCCESS. Shape: {dataframe.shape}",
+                    log_string=f"Step 6: Shipper City Extraction - SUCCESS. Shape: {dataframe.shape}",
                     level="info"
                 )
+                # Manual validation
+                manual_validator("Step 6 Shipper City Extraction", main_dataframe, dataframe, column_names=["Shipper City"])
+                print("✅ Manual validation completed for Step 6: City Extraction")
+                csv_saver(dataframe, processing_filepath, raw_manifest_filename)
+                print(f"✅ Step 6: Shipper City Extraction processed | 📊 Shape: {dataframe.shape}")
+
             except Exception as e:
-                error_msg = f"Error during Step 6 (City Extraction) for '{raw_manifest_filename}': {e}"
+                error_msg = f"Error during Step 6 (Shipper City Extraction) for '{raw_manifest_filename}': {e}"
                 print(error_msg)
                 log_message(
                     folder=PIPELINE_MAIN_PROCESS_FOLDER,
                     raw_manifest_filename=raw_manifest_filename,
-                    log_string=f"Step 6: City Extraction for {raw_manifest_filename} - FAILURE. Error: {e}",
+                    log_string=f"Step 6: Shipper City Extraction for {raw_manifest_filename} - FAILURE. Error: {e}",
                     level="error"
                 )
+                continue # Skip to the next file (will execute outer finally)
 
             # Step 7: Extract Consignee City from address
             try:
@@ -237,18 +248,46 @@ def pipeline(test_mode=False):
                 log_message(
                     folder=PIPELINE_MAIN_PROCESS_FOLDER,
                     raw_manifest_filename=raw_manifest_filename,
-                    log_string=f"Step 7: City Extraction - SUCCESS. Shape: {dataframe.shape}",
+                    log_string=f"Step 7: Consignee City Extraction - SUCCESS. Shape: {dataframe.shape}",
                     level="info"
                 )
+
+                # Manual validation
+                manual_validator("Step 7 Consignee City Extraction", main_dataframe, dataframe, column_names=["Consignee City"])
+                print("✅ Manual validation completed for Step 7: City Extraction")
+                csv_saver(dataframe, processing_filepath, raw_manifest_filename)
+                print(f"✅ Step 7: Consignee City Extraction processed | 📊 Shape: {dataframe.shape}")
+
             except Exception as e:
-                error_msg = f"Error during Step 7 (City Extraction) for '{raw_manifest_filename}': {e}"
+                error_msg = f"Error during Step 7 (Consignee City Extraction) for '{raw_manifest_filename}': {e}"
                 print(error_msg)
                 log_message(
                     folder=PIPELINE_MAIN_PROCESS_FOLDER,
                     raw_manifest_filename=raw_manifest_filename,
-                    log_string=f"Step 7: City Extraction for {raw_manifest_filename} - FAILURE. Error: {e}",
+                    log_string=f"Step 7: Consignee City Extraction for {raw_manifest_filename} - FAILURE. Error: {e}",
                     level="error"
                 )
+                continue # Skip to the next file (will execute outer finally)
+
+            # Step 11: HS Code Extraction
+            try:
+                dataframe = extract_hs_code(dataframe, raw_manifest_filename)
+                log_message(
+                    folder=PIPELINE_MAIN_PROCESS_FOLDER,
+                    raw_manifest_filename=raw_manifest_filename,
+                    log_string=f"Step 11: HS Code Extraction - SUCCESS. Shape: {dataframe.shape}",
+                    level="info"
+                )
+            except Exception as e:
+                error_msg = f"Error during Step 11 (HS Code Extraction) for '{raw_manifest_filename}': {e}"
+                print(error_msg)
+                log_message(
+                    folder=PIPELINE_MAIN_PROCESS_FOLDER,
+                    raw_manifest_filename=raw_manifest_filename,
+                    log_string=f"Step 11: HS Code Extraction for {raw_manifest_filename} - FAILURE. Error: {e}",
+                    level="error"
+                )
+                continue # Skip to the next file (will execute outer finally)
 
 
             log_message( 
