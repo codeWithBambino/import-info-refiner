@@ -76,6 +76,8 @@ class GemmaHandler:
             ]
         }
 
+        print("PAYLOAD: ", payload)
+
         # Set headers
         headers = {
             "Content-Type": "application/json",
