@@ -6,6 +6,7 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
 # Gemma
 GEMMA_HOST = "http://13.203.232.124:11434/v1"
 MODEL = "gemma3:12b"
+GEMMA_NUM_THREADS = 2  # Number of threads for concurrent Gemma requests
 
 # Gemma Prompt Paths
 PARTY_STANDARDIZER_PROMPT = os.path.join(BASE_DIR, "src/prompts/party_standardizer_prompt.txt")

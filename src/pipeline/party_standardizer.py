@@ -10,7 +10,7 @@ from src.config.config import PARTY_STANDARDIZER_PROMPT, TEMP_DIR, COLUMNS_TO_ST
 from src.config.abbreviations import ABBREVIATIONS, UNWANTED_TOKENS
 import re
 
-CHUNK_SIZE = 10
+CHUNK_SIZE = 20
 
 def clean_party_name(name: str, raw_manifest_filename: str) -> str:
 
@@ -114,63 +114,58 @@ def process_chunk(name_chunk, raw_manifest_filename):
     # Clean each name in the chunk first
     cleaned_raw_names = [clean_party_name(name, raw_manifest_filename) for name in name_chunk]
     
-    # Prepare the input for Gemma as a JSON batch
-    company_batch = {
-        "Companies": [{
-            "Raw Name": name
-        } for name in cleaned_raw_names]
-    }
-    
-    # Process the prompt using GemmaHandler
-    response = gemma_handler.process_prompt(PARTY_STANDARDIZER_PROMPT, company_batch)
-    status = response['status']
-    
-    
+    # Prepare the inputs for Gemma as a list of JSON-like dicts for batching
+    # Each item in the list will be a separate prompt input for Gemma
+    # The prompt template itself expects a 'Companies' list with 'Raw Name'
+    gemma_inputs = [
+        json.dumps({"Companies": [{"Raw Name": name}]}) for name in cleaned_raw_names
+    ]
+
+    # Process the prompts using GemmaHandler's process_prompts for concurrency
+    responses = gemma_handler.process_prompts(PARTY_STANDARDIZER_PROMPT, gemma_inputs)
+
     # Create a mapping between raw names and cleaned names
     name_map = {}
-    
-    if status and response and response.get('data') and 'Companies' in response['data']:
-        companies_data = response['data']['Companies']
-        
-        # Map raw names to their cleaned versions
-        for raw_name, cleaned_raw in zip(name_chunk, cleaned_raw_names):
-            cleaned_name = None
-            
-            # Find matching company in response
-            for item in companies_data:
-                if item['Raw Name'] == cleaned_raw:
-                    cleaned_name = item['Cleaned']
-                    break
-            
-            if cleaned_name is None:
-                # Fall back to the cleaned raw name if no match found
-                cleaned_name = cleaned_raw
-            
-            # Store in map using raw name as key
-            name_map[raw_name] = cleaned_name
-            
-            # Log the standardization
+
+    for i, response in enumerate(responses):
+        raw_name_original = name_chunk[i]  # Original name from the input chunk
+        cleaned_raw_name = cleaned_raw_names[i] # Pre-cleaned name sent to Gemma
+        final_cleaned_name = cleaned_raw_name # Default to pre-cleaned name
+
+        if response and response.get('status') == 'success' and response.get('data') and 'Companies' in response['data']:
+            companies_data = response['data']['Companies']
+            if companies_data: # Expecting one company per response item
+                # The 'Raw Name' in Gemma's response should match our 'cleaned_raw_name'
+                # And 'Cleaned' is the name standardized by Gemma
+                gemma_standardized_name = companies_data[0].get('Cleaned')
+                if gemma_standardized_name:
+                    final_cleaned_name = gemma_standardized_name
+                else:
+                    log_message(
+                        folder=STANDARDIZE_PARTY_NAMES_FOLDER,
+                        raw_manifest_filename=raw_manifest_filename,
+                        log_string=f"Gemma response for '{cleaned_raw_name}' missing 'Cleaned' field. Using pre-cleaned name."
+                    )
+            else:
+                log_message(
+                    folder=STANDARDIZE_PARTY_NAMES_FOLDER,
+                    raw_manifest_filename=raw_manifest_filename,
+                    log_string=f"Gemma response for '{cleaned_raw_name}' missing 'Companies' data. Using pre-cleaned name."
+                )
+        else:
+            error_msg = response.get('message', 'Unknown error') if isinstance(response, dict) else 'Processing failed'
             log_message(
                 folder=STANDARDIZE_PARTY_NAMES_FOLDER,
                 raw_manifest_filename=raw_manifest_filename,
-                log_string=f"{raw_name} -> {cleaned_name}"
+                log_string=f"Gemma processing failed for '{cleaned_raw_name}': {error_msg}. Using pre-cleaned name."
             )
-    else:
-        # If processing failed, create map using cleaned raw names
-        error_msg = response.get('message', 'Unknown error') if isinstance(response, dict) else 'Processing failed'
+        
+        name_map[raw_name_original] = final_cleaned_name
         log_message(
             folder=STANDARDIZE_PARTY_NAMES_FOLDER,
             raw_manifest_filename=raw_manifest_filename,
-            log_string=f"Gemma processing failed: {error_msg}"
+            log_string=f"{raw_name_original} -> {final_cleaned_name}"
         )
-        
-        for raw_name, cleaned_raw in zip(name_chunk, cleaned_raw_names):
-            name_map[raw_name] = cleaned_raw
-            log_message(
-                folder=STANDARDIZE_PARTY_NAMES_FOLDER,
-                raw_manifest_filename=raw_manifest_filename,
-                log_string=f"{raw_name} -> {cleaned_raw} (fallback)"
-            )
     
     return name_map
 
@@ -210,48 +205,53 @@ def party_standardizer(dataframe: pd.DataFrame, raw_manifest_filename: str, back
         )
         
         # Get unique names from the column
-        unique_names = dataframe[column].unique().tolist()
-        total_unique = len(unique_names)
+        all_unique_names_in_column = dataframe[column].unique().tolist()
+        
+        # Filter out names that are already in the backup for this column
+        names_to_process_from_backup = backup_data.get(column, {})
+        names_needing_processing = [name for name in all_unique_names_in_column if name not in names_to_process_from_backup]
+        
+        total_to_process_api = len(names_needing_processing)
+        total_from_backup = len(all_unique_names_in_column) - total_to_process_api
+
         log_message(
             folder=STANDARDIZE_PARTY_NAMES_FOLDER,
             raw_manifest_filename=raw_manifest_filename,
-            log_string=f"Found {total_unique} unique names out of {len(dataframe)} total records"
+            log_string=f"Column '{column}': Total unique names: {len(all_unique_names_in_column)}. "
+                       f"To be processed via API: {total_to_process_api}. Loaded from backup: {total_from_backup}."
         )
         
         # Create a new column for cleaned names
         cleaned_column = f"cleaned_{column}"
-        dataframe[cleaned_column] = dataframe[column]
+        dataframe[cleaned_column] = dataframe[column] # Initialize with original names
+
+        # Apply backed-up names first
+        if names_to_process_from_backup:
+            log_message(
+                folder=STANDARDIZE_PARTY_NAMES_FOLDER,
+                raw_manifest_filename=raw_manifest_filename,
+                log_string=f"Applying {len(names_to_process_from_backup)} names from backup for column '{column}'..."
+            )
+            for name, cleaned_name in tqdm(names_to_process_from_backup.items(), desc=f"Applying backup for {column}"):
+                dataframe.loc[dataframe[column] == name, cleaned_column] = cleaned_name
         
-        # Process unique names in chunks with progress bar
-        progress_bar = tqdm(range(0, total_unique, CHUNK_SIZE), desc=f"Standardizing {column}")
-        for chunk_start in progress_bar:
-            chunk_end = min(chunk_start + CHUNK_SIZE, total_unique)
-            current_chunk = unique_names[chunk_start:chunk_end]
-            
-            # Skip processing if all names in this chunk are already in the backup
-            already_processed = all(name in backup_data.get(column, {}) for name in current_chunk)
-            
-            if already_processed:
-                # Load from backup and map to all occurrences
-                progress_bar.set_postfix_str(f"Loading from backup: {chunk_start}-{chunk_end}")
+        # Process remaining unique names in chunks with progress bar
+        if names_needing_processing:
+            progress_bar = tqdm(range(0, total_to_process_api, CHUNK_SIZE), desc=f"Standardizing {column} via API")
+            for chunk_start in progress_bar:
+                chunk_end = min(chunk_start + CHUNK_SIZE, total_to_process_api)
+                current_chunk_to_process = names_needing_processing[chunk_start:chunk_end]
+                
+                if not current_chunk_to_process: # Should not happen if names_needing_processing is not empty
+                    continue
+
+                progress_bar.set_postfix_str(f"API Processing: {chunk_start}-{chunk_end} of {total_to_process_api}")
                 log_message(
                     folder=STANDARDIZE_PARTY_NAMES_FOLDER,
                     raw_manifest_filename=raw_manifest_filename,
-                    log_string=f"Loading chunk {chunk_start}-{chunk_end} from backup"
+                    log_string=f"Processing chunk {chunk_start}-{chunk_end} for column '{column}' via API ({len(current_chunk_to_process)} names)"
                 )
-                for name in current_chunk:
-                    cleaned_name = backup_data[column][name]
-                    # Update all rows with this raw name
-                    dataframe.loc[dataframe[column] == name, cleaned_column] = cleaned_name
-            else:
-                # Process the chunk
-                progress_bar.set_postfix_str(f"Processing: {chunk_start}-{chunk_end}")
-                log_message(
-                    folder=STANDARDIZE_PARTY_NAMES_FOLDER,
-                    raw_manifest_filename=raw_manifest_filename,
-                    log_string=f"Processing chunk {chunk_start}-{chunk_end}"
-                )
-                name_map = process_chunk(current_chunk, raw_manifest_filename)
+                name_map = process_chunk(current_chunk_to_process, raw_manifest_filename)
                 
                 # Update DataFrame and backup
                 for raw_name, cleaned_name in name_map.items():
@@ -264,11 +264,19 @@ def party_standardizer(dataframe: pd.DataFrame, raw_manifest_filename: str, back
                     backup_data[column][raw_name] = cleaned_name
                 
                 # Save progress to backup file after each chunk
-                with open(backup_file, "w") as f:
-                    json.dump(backup_data, f, indent=2)
+                try:
+                    with open(backup_file, "w") as f:
+                        json.dump(backup_data, f, indent=2)
+                except IOError as e:
+                    log_message(
+                        folder=STANDARDIZE_PARTY_NAMES_FOLDER,
+                        raw_manifest_filename=raw_manifest_filename,
+                        log_string=f"Error saving backup file {backup_file}: {e}"
+                    )
                 
                 # Add a small delay between chunks to avoid rate limiting
-                time.sleep(3)
+                if chunk_end < total_to_process_api: # Avoid sleep after the last chunk
+                    time.sleep(3)
         
         # Replace original column with cleaned version
         dataframe.drop(columns=column, inplace=True)

@@ -2,8 +2,9 @@ import os
 import requests
 import json
 import time # Added for retry delay
-from typing import Dict, Any, Optional
-from src.config.config import GEMMA_HOST, MODEL
+from typing import Dict, Any, Optional, List
+import concurrent.futures
+from src.config.config import GEMMA_HOST, MODEL, GEMMA_NUM_THREADS
 from src.helpers.logger import setup_logger
 
 class GemmaHandler:
@@ -76,12 +77,12 @@ class GemmaHandler:
             ]
         }
 
-        print("PAYLOAD: ", payload)
+        self.logger.debug(f"Gemma API Request Payload: {json.dumps(payload, indent=2)}")
 
         # Set headers
         headers = {
             "Content-Type": "application/json",
-            "Authorization": "Bearer ollama"  # Using "ollama" as the API key
+            "Authorization": "Bearer ollama"
         }
 
         # Construct the full URL for chat completions
@@ -174,8 +175,65 @@ class GemmaHandler:
             "message": final_error_msg
         }
 
+    def process_prompts(self, template_path: str, custom_inputs: List[str]) -> List[Dict[str, Any]]:
+        """Process multiple prompts concurrently using a template and a list of custom inputs.
+
+        Args:
+            template_path (str): Path to the prompt template file.
+            custom_inputs (List[str]): A list of custom inputs to insert into the template.
+
+        Returns:
+            List[Dict[str, Any]]: A list of response dictionaries, each containing either
+            the success response data or error information with status and message.
+        """
+        results = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=GEMMA_NUM_THREADS) as executor:
+            future_to_input = {}
+            for custom_input in custom_inputs:
+                try:
+                    prompt = self._prompt_retriever(template_path, custom_input)
+                    future = executor.submit(self._ask_gemma, prompt)
+                    future_to_input[future] = custom_input
+                except Exception as e:
+                    error_msg = f"Failed to process prompt template for input '{custom_input}': {str(e)}"
+                    self.logger.error(error_msg)
+                    results.append({
+                        "status": "error",
+                        "error": "TEMPLATE_PROCESSING_ERROR",
+                        "message": error_msg,
+                        "input": custom_input
+                    })
+
+            for future in concurrent.futures.as_completed(future_to_input):
+                custom_input = future_to_input[future]
+                try:
+                    response = future.result()
+                    if isinstance(response, dict) and response.get('status') == 'success':
+                        self.logger.info(f"Successfully processed prompt for input: {custom_input[:50]}...")
+                        results.append(response)
+                    else:
+                        error_msg = response.get('message', 'Unknown error occurred')
+                        self.logger.error(f"Gemma API request failed for input '{custom_input[:50]}...': {error_msg}")
+                        results.append({
+                            "status": "error",
+                            "error": "API_ERROR",
+                            "message": error_msg,
+                            "input": custom_input
+                        })
+                except Exception as exc:
+                    error_msg = f"Error processing input '{custom_input[:50]}...': {exc}"
+                    self.logger.error(error_msg, exc_info=True)
+                    results.append({
+                        "status": "error",
+                        "error": "PROCESSING_ERROR",
+                        "message": error_msg,
+                        "input": custom_input
+                    })
+        return results
+
     def process_prompt(self, template_path: str, custom_input: str) -> Dict[str, Any]:
-        """Process a prompt using a template and custom input.
+        """Process a single prompt using a template and custom input.
+           This is a wrapper for process_prompts for backward compatibility or single prompt processing.
 
         Args:
             template_path (str): Path to the prompt template file
@@ -198,24 +256,24 @@ class GemmaHandler:
                     "message": error_msg
                 }
 
-            # Call Gemma API
-            response = self._ask_gemma(prompt)
-
-            # Log the response based on status
-            if isinstance(response, dict) and response.get('status') == 'success':
-                self.logger.info("Successfully processed prompt with Gemma API")
-                return response
+            # Call Gemma API using the new multi-prompt method
+            # For a single prompt, we pass it as a list with one item
+            responses = self.process_prompts(template_path, [custom_input])
+            # Return the first (and only) response
+            if responses:
+                return responses[0]
             else:
-                error_msg = response.get('message', 'Unknown error occurred')
-                self.logger.error(f"Gemma API request failed: {error_msg}")
+                # This case should ideally not happen if process_prompts is implemented correctly
+                # and always returns a list, even if it's a list of error dicts.
+                self.logger.error("process_prompts returned an empty list for a single input.")
                 return {
                     "status": "error",
-                    "error": "API_ERROR",
-                    "message": error_msg
+                    "error": "INTERNAL_PROCESSING_ERROR",
+                    "message": "Internal error: process_prompts returned no response for a single input."
                 }
 
         except Exception as e:
-            error_msg = f"Unexpected error in process_prompt: {str(e)}"
+            error_msg = f"Unexpected error in process_prompt (single): {str(e)}"
             self.logger.error(error_msg, exc_info=True)
             return {
                 "status": "error",
@@ -227,7 +285,7 @@ class GemmaHandler:
         """Extract and validate data from a successful Gemma response.
 
         Args:
-            response_data (Dict[str, Any]): The response data from process_prompt
+            response_data (Dict[str, Any]): The response data from process_prompt or an item from process_prompts
 
         Returns:
             Optional[Dict[str, Any]]: Extracted data if successful, None if invalid
