@@ -33,6 +33,7 @@ logs/
 *.log
 
 # Temporary files
+*manual_validation/
 data/manifests/cleaned/
 data/manifests/processing/
 data/manifests/raw/
