@@ -2,276 +2,424 @@ import os
 import pandas as pd
 import json
 import time
+import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
+from src.helpers.logger import log_message
+
 from src.helpers.ai.gemma_handler import GemmaHandler
 from src.helpers.logger import log_message
 from src.config.folder_name import STANDARDIZE_PARTY_NAMES_FOLDER
-from src.config.config import PARTY_STANDARDIZER_PROMPT, TEMP_DIR, COLUMNS_TO_STANDARDIZE
+from src.config.config import (
+    PARTY_STANDARDIZER_PROMPT,
+    TEMP_DIR,
+    COLUMNS_TO_STANDARDIZE,
+    GEMMA_NUM_THREADS,   # fixed cap from config
+    DATA_CHUNK_SIZE,     # e.g. 10, defined in config.py
+)
 from src.config.abbreviations import ABBREVIATIONS, UNWANTED_TOKENS
-import re
 
-CHUNK_SIZE = 10
 
-def clean_party_name(name: str, raw_manifest_filename: str) -> str:
-
+def local_clean_name(name: str) -> str:
     """
-    Cleans a single party name using a robust and ordered series of transformations.
-    Optimized for correcting messy, inconsistent formats commonly seen in party names.
-
-    Args:
-        name (str): The raw company/party name.
-
-    Returns:
-        str: The cleaned and standardized name.
+    Perform basic regex‐and abbreviation‐based cleanup on a raw party name.
     """
-    try:
-        # Step 1: Initial whitespace normalization (foundational)
-        cleaned = re.sub(r'[\s\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]+', ' ', name)  # Normalize all whitespace types
-        cleaned = cleaned.strip()  # Remove leading/trailing spaces
-        
-        # Step 2: Convert to uppercase (must happen early but after whitespace normalization)
-        cleaned = cleaned.upper()  # Unify case for consistent pattern matching
-        
-        # Step 3: Extract content from parentheses (before removing special characters)
-        cleaned = re.sub(r'\(([^)]+)\)', r'\1', cleaned)  # Preserve parenthetical content
-        
-        # Step 4: Fix dot-separated initials (before removing punctuation)
-        cleaned = re.sub(r'\b([A-Z])\.([A-Z])\.', r'\1 \2 ', cleaned)  # Handle double initials
-        cleaned = re.sub(r'\b([A-Z])\.([A-Z])', r'\1 \2', cleaned)  # Handle paired initials
-        cleaned = re.sub(r'\b([A-Z])\.', r'\1', cleaned)  # Handle single initials
-        
-        # Step 5: Normalize punctuation by replacing hyphens and periods with spaces
-        cleaned = re.sub(r'[-.]', ' ', cleaned)  # Convert punctuation to spaces
-        
-        # Step 6: Remove special characters (after handling specific punctuation)
-        cleaned = re.sub(r'[^A-Z0-9\s,]', ' ', cleaned)  # Remove special chars except commas
-        cleaned = re.sub(r'\s+', ' ', cleaned).strip()  # Clean up resulting whitespace
-        
-        # Step 7: Remove unwanted tokens (after case conversion, before company type normalization)
-        for token in UNWANTED_TOKENS:
-            cleaned = re.sub(r'\b' + re.escape(token) + r'\b', '', cleaned)  # Remove standard tokens with word boundaries
-        
-        # Step 8: Remove leading numbers (early cleanup before company name standardization)
-        cleaned = re.sub(r'^\d+\s+', '', cleaned)  # Strip leading numeric identifiers
-        
-        # Step 9: Remove location indicators (before company suffix standardization)
-        cleaned = re.sub(r'\b(IN|I|IND|INDI|INDIA)\b', '', cleaned)  # Remove country references
-        
-        # Step 10: Apply custom abbreviation replacements (sort by length to handle longer patterns first)
-        sorted_abbrevs = sorted(ABBREVIATIONS.items(), key=lambda x: len(x[0]), reverse=True)
-        for abbr, full_form in sorted_abbrevs:
-            # Use word boundaries to ensure we're matching whole words
-            pattern = r'\b' + re.escape(abbr) + r'\b'
-            cleaned = re.sub(pattern, full_form, cleaned)
-        
-        # Step 11: Standardize company type variations (more specific patterns first)
-        cleaned = re.sub(r'\b(PRIVATELT|PRIVA|PRIVATELTD|PRIVATELIM|PRIVATELIMITED|PVT\.?\s*LT|PVT\.?\s*LTD|P\.?\s*LTD)\b', 
-                        'PRIVATE LIMITED', cleaned)  # Standardize private limited variants
-        cleaned = re.sub(r'\b(LIMI|LI|L|LIMIT|LIM|LIMITE)\b', 'LIMITED', cleaned)  # Standardize limited variants
-        cleaned = re.sub(r'\b(P|PVT|OP|CO)\b(?!\s*LIMITED)', 'PRIVATE', cleaned)  # Handle abbreviations
-        
-        # Step 12: Remove duplicate company type suffixes (after standardization)
-        cleaned = re.sub(r'\bPRIVATE\s+LIMITED\s+PRIVATE\s+LIMITED\b', 'PRIVATE LIMITED', cleaned)  # Fix duplicated suffixes
-        cleaned = re.sub(r'\bPRIVATE\s+PRIVATE\b', 'PRIVATE', cleaned)  # Fix duplicated terms
-        
-        # Step 13: Fix misplaced commas before suffixes (after company type standardization)
-        cleaned = re.sub(r',\s+(INC|LTD|LLC|LLP|CORP)\b', r' \1', cleaned)  # Fix comma placement
-        
-        # Step 14: Remove department or branch descriptors (near end of cleaning)
-        cleaned = re.sub(r'\s+(HQ|BRANCH|DIVISION|UNIT|PLANT|SECTION|CENTER|CENTRE)$', '', cleaned)  # Remove dept indicators
-        
-        # Step 15: Remove trailing code-like tokens (final specific cleanup)
-        cleaned = re.sub(r'(?<!\,)\s+[A-Z]\s+[A-Z0-9-]*\d[A-Z0-9-]*$', '', cleaned)  # Remove trailing codes
-        
-        # Step 16: Final whitespace cleanup (always last)
-        cleaned = re.sub(r'\s+', ' ', cleaned).strip()  # Ensure single spaces throughout
+    # No logging here since this is a simple utility
+    if pd.isna(name):
+        return ""
+    # 1. Normalize to uppercase and strip whitespace
+    cleaned = name.strip().upper()
+    # 2. Replace any punctuation (non‐alphanumeric, non‐whitespace) with a space
+    cleaned = re.sub(r"[^\w\s]", " ", cleaned)
+    # 3. Collapse multiple spaces into one
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    # 4. Tokenize
+    tokens = cleaned.split()
+    # 5. Remove tokens listed in UNWANTED_TOKENS
+    tokens = [t for t in tokens if t not in UNWANTED_TOKENS]
+    # 6. Replace any token found in ABBREVIATIONS
+    tokens = [ABBREVIATIONS.get(t, t) for t in tokens]
+    # 7. Rejoin into a single string
+    return " ".join(tokens)
 
-        return cleaned
 
-    except Exception as e:
-        
-        log_message(
-            folder=STANDARDIZE_PARTY_NAMES_FOLDER,
-            raw_manifest_filename=raw_manifest_filename,
-            log_string=f"Exception while cleaning party name: {e}\nName: {name}"
-        )
-        return name
-
-def process_chunk(name_chunk, raw_manifest_filename):
+def process_batch(
+    batch_values: list[str],
+    column: str,
+    batch_index: int,
+    raw_manifest_filename: str,
+):
     """
-    Process a chunk of company names at once using Gemma.
-    
-    Args:
-        name_chunk (list): List of raw company names to process
-        raw_manifest_filename (str): Name of the CSV file for logging purposes
-        
-    Returns:
-        dict: Dictionary mapping raw names to cleaned names
+    Process a list of up to DATA_CHUNK_SIZE pre-cleaned names for 'column'.
+    - Build a single JSON payload: {"Companies":[{"Raw Name": name1}, ...]}
+    - Send to Gemma; extract each "Cleaned" value from response_data["Companies"][i]["Cleaned"].
+    - Retries if Gemma errors or returns invalid JSON (up to 3 attempts).
+    - Persist partial results to temp_<column>_cleaned_batch_<batch_index>.json so we can resume.
     """
-    # Initialize GemmaHandler
-    gemma_handler = GemmaHandler(STANDARDIZE_PARTY_NAMES_FOLDER)
-    
-    # Clean each name in the chunk first
-    cleaned_raw_names = [clean_party_name(name, raw_manifest_filename) for name in name_chunk]
-    
-    # Prepare the input for Gemma as a JSON batch
-    company_batch = {
-        "Companies": [{
-            "Raw Name": name
-        } for name in cleaned_raw_names]
-    }
-    
-    # Process the prompt using GemmaHandler
-    response = gemma_handler.process_prompt(PARTY_STANDARDIZER_PROMPT, company_batch)
-    status = response['status']
-    
-    
-    # Create a mapping between raw names and cleaned names
-    name_map = {}
-    
-    if status and response and response.get('data') and 'Companies' in response['data']:
-        companies_data = response['data']['Companies']
-        
-        # Map raw names to their cleaned versions
-        for raw_name, cleaned_raw in zip(name_chunk, cleaned_raw_names):
-            cleaned_name = None
-            
-            # Find matching company in response
-            for item in companies_data:
-                if item['Raw Name'] == cleaned_raw:
-                    cleaned_name = item['Cleaned']
-                    break
-            
-            if cleaned_name is None:
-                # Fall back to the cleaned raw name if no match found
-                cleaned_name = cleaned_raw
-            
-            # Store in map using raw name as key
-            name_map[raw_name] = cleaned_name
-            
-            # Log the standardization
-            log_message(
-                folder=STANDARDIZE_PARTY_NAMES_FOLDER,
-                raw_manifest_filename=raw_manifest_filename,
-                log_string=f"{raw_name} -> {cleaned_name}"
-            )
-    else:
-        # If processing failed, create map using cleaned raw names
-        error_msg = response.get('message', 'Unknown error') if isinstance(response, dict) else 'Processing failed'
-        log_message(
-            folder=STANDARDIZE_PARTY_NAMES_FOLDER,
-            raw_manifest_filename=raw_manifest_filename,
-            log_string=f"Gemma processing failed: {error_msg}"
-        )
-        
-        for raw_name, cleaned_raw in zip(name_chunk, cleaned_raw_names):
-            name_map[raw_name] = cleaned_raw
-            log_message(
-                folder=STANDARDIZE_PARTY_NAMES_FOLDER,
-                raw_manifest_filename=raw_manifest_filename,
-                log_string=f"{raw_name} -> {cleaned_raw} (fallback)"
-            )
-    
-    return name_map
+    folder = STANDARDIZE_PARTY_NAMES_FOLDER
+    log_message(
+        folder=folder,
+        raw_manifest_filename=raw_manifest_filename,
+        log_string=f"Starting processing batch {batch_index} for column '{column}' with {len(batch_values)} names.",
+        level="info",
+    )
 
-def party_standardizer(dataframe: pd.DataFrame, raw_manifest_filename: str, backup_file: str = "backup_cleaned_party_names.json") -> pd.DataFrame:
-    """
-    Standardizes the party names in the specified columns of the DataFrame.
-    Processes only unique names in chunks for efficiency.
-    Backs up progress to a JSON file after each processed chunk.
+    temp_folder = os.path.join(TEMP_DIR, folder)
+    os.makedirs(temp_folder, exist_ok=True)
 
-    Args:
-        dataframe (pd.DataFrame): The input DataFrame.
-        raw_manifest_filename (str): Name of the CSV file for logging purposes.
-        backup_file (str): Path to the JSON file for saving backup.
+    temp_file = os.path.join(
+        temp_folder, f"temp_{column}_cleaned_batch_{batch_index}.json"
+    )
 
-    Returns:
-        pd.DataFrame: The DataFrame with standardized party names.
-    """
-    # Load existing backup if available
-    backup_data = {}
-    backup_file = os.path.join(TEMP_DIR, backup_file)
-    if os.path.exists(backup_file):
+    # 1) Load existing mapping if present (resume capability)
+    if os.path.exists(temp_file):
         try:
-            with open(backup_file, "r") as f:
-                backup_data = json.load(f)
-        except json.JSONDecodeError:
+            with open(temp_file, "r", encoding="utf-8") as f:
+                batch_mapping = json.load(f)
             log_message(
-                folder=STANDARDIZE_PARTY_NAMES_FOLDER,
+                folder=folder,
                 raw_manifest_filename=raw_manifest_filename,
-                log_string=f"Warning: Could not parse {backup_file}, starting with empty backup."
+                log_string=(
+                    f"Loaded existing temp file for batch {batch_index}, column '{column}', "
+                    f"entries: {len(batch_mapping)}."
+                ),
+                level="info",
             )
+        except Exception as e:
+            log_message(
+                folder=folder,
+                raw_manifest_filename=raw_manifest_filename,
+                log_string=(
+                    f"Error reading existing temp file for batch {batch_index}, "
+                    f"column '{column}': {e}. Starting fresh."
+                ),
+                level="error",
+            )
+            batch_mapping = {}
+    else:
+        batch_mapping = {}
+        log_message(
+            folder=folder,
+            raw_manifest_filename=raw_manifest_filename,
+            log_string=f"No existing temp file for batch {batch_index}, column '{column}'. Starting fresh.",
+            level="info",
+        )
+
+    gemma = GemmaHandler()
+
+    # 2) Determine which names still need processing
+    to_process = [name for name in batch_values if name not in batch_mapping]
+    if not to_process:
+        log_message(
+            folder=folder,
+            raw_manifest_filename=raw_manifest_filename,
+            log_string=f"No names left to process in batch {batch_index} for column '{column}'.",
+            level="info",
+        )
+        return  # nothing left in this batch
+
+    # 3) Build JSON payload for all to_process names
+    payload_dict = {"Companies": [{"Raw Name": name} for name in to_process]}
+    custom_input = json.dumps(payload_dict)
+
+    attempts = 0
+    response = None
+    while attempts < 3:
+        attempts += 1
+        log_message(
+            folder=folder,
+            raw_manifest_filename=raw_manifest_filename,
+            log_string=(
+                f"Sending request to Gemma for batch {batch_index}, column '{column}', "
+                f"attempt {attempts}/3 with {len(to_process)} names."
+            ),
+            level="info",
+        )
+        try:
+            response = gemma.process_prompt(PARTY_STANDARDIZER_PROMPT, custom_input)
+        except Exception as e:
+            log_message(
+                folder=folder,
+                raw_manifest_filename=raw_manifest_filename,
+                log_string=(
+                    f"Gemma exception for batch {batch_index}, column '{column}', "
+                    f"attempt {attempts}/3: {e}. Retrying in 5s."
+                ),
+                level="error",
+            )
+            time.sleep(5)
+            continue
+
+        # Now response should be a dict with top-level "Companies"
+        if (
+            isinstance(response, dict)
+            and "Companies" in response
+            and isinstance(response["Companies"], list)
+            and len(response["Companies"]) == len(to_process)
+        ):
+            valid = True
+            for item in response["Companies"]:
+                if not (
+                    isinstance(item, dict)
+                    and "Raw Name" in item
+                    and "Cleaned" in item
+                ):
+                    valid = False
+                    break
+            if valid:
+                log_message(
+                    folder=folder,
+                    raw_manifest_filename=raw_manifest_filename,
+                    log_string=(
+                        f"Received valid response from Gemma for batch {batch_index}, column '{column}'."
+                    ),
+                    level="info",
+                )
+                break
+
+        log_message(
+            folder=folder,
+            raw_manifest_filename=raw_manifest_filename,
+            log_string=(
+                f"Invalid response structure from Gemma for batch {batch_index}, "
+                f"column '{column}', attempt {attempts}/3. Retrying in 2s."
+            ),
+            level="error",
+        )
+        time.sleep(2)
+
+    # 4) Build final mapping (either from response or fallback)
+    final_mapping = {}
+    if response and isinstance(response, dict) and "Companies" in response:
+        for item in response["Companies"]:
+            raw = item.get("Raw Name", "")
+            cleaned = item.get("Cleaned", raw)
+            final_mapping[raw] = cleaned
+    else:
+        for raw in to_process:
+            final_mapping[raw] = raw
+        log_message(
+            folder=folder,
+            raw_manifest_filename=raw_manifest_filename,
+            log_string=(
+                f"Max retries reached or invalid JSON for batch {batch_index}, column '{column}'. "
+                f"Falling back to pre-cleaned names."
+            ),
+            level="error",
+        )
+
+    batch_mapping.update(final_mapping)
+
+    # 5) Persist to temp file
+    try:
+        with open(temp_file, "w", encoding="utf-8") as f:
+            json.dump(batch_mapping, f, indent=2)
+        log_message(
+            folder=folder,
+            raw_manifest_filename=raw_manifest_filename,
+            log_string=(
+                f"Written temp file for batch {batch_index}, column '{column}', "
+                f"total entries: {len(batch_mapping)}."
+            ),
+            level="info",
+        )
+    except Exception as e:
+        log_message(
+            folder=folder,
+            raw_manifest_filename=raw_manifest_filename,
+            log_string=(
+                f"Error writing temp file for batch {batch_index}, column '{column}': {e}"
+            ),
+            level="error",
+        )
+
+
+def standardize_party_names(
+    dataframe: pd.DataFrame, raw_manifest_filename: str
+) -> pd.DataFrame:
+    """
+    Standardize each column in COLUMNS_TO_STANDARDIZE by:
+    1) Local cleanup → pre_cleaned_<column>.
+    2) Deduplicate and split unique values into batches of DATA_CHUNK_SIZE.
+    3) Compute num_threads = min(GEMMA_NUM_THREADS, total_batches).
+    4) Use ThreadPoolExecutor with dynamic num_threads to process batches in parallel,
+       wrapped in a tqdm progress bar.
+    5) Merge all batch mappings, build cleaned_<column>, drop/rename.
+    """
+    folder = STANDARDIZE_PARTY_NAMES_FOLDER
+    log_message(
+        folder=folder,
+        raw_manifest_filename=raw_manifest_filename,
+        log_string="Starting standardize_party_names.",
+        level="info",
+    )
+
+    if "ID" not in dataframe.columns:
+        log_message(
+            folder=folder,
+            raw_manifest_filename=raw_manifest_filename,
+            log_string="DataFrame missing 'ID' column. Cannot proceed.",
+            level="error",
+        )
+        raise ValueError("DataFrame must contain an 'ID' column for mapping.")
+
+    base_temp_folder = os.path.join(TEMP_DIR, folder)
+    os.makedirs(base_temp_folder, exist_ok=True)
 
     for column in COLUMNS_TO_STANDARDIZE:
         log_message(
-            folder=STANDARDIZE_PARTY_NAMES_FOLDER,
+            folder=folder,
             raw_manifest_filename=raw_manifest_filename,
-            log_string=f"Processing column: {column}"
+            log_string=f"Standardizing column '{column}'.",
+            level="info",
         )
-        
-        # Get unique names from the column
-        unique_names = dataframe[column].unique().tolist()
-        total_unique = len(unique_names)
+
+        # 1) Local cleanup
+        pre_col = f"pre_cleaned_{column}"
+        dataframe[pre_col] = dataframe[column].apply(local_clean_name)
         log_message(
-            folder=STANDARDIZE_PARTY_NAMES_FOLDER,
+            folder=folder,
             raw_manifest_filename=raw_manifest_filename,
-            log_string=f"Found {total_unique} unique names out of {len(dataframe)} total records"
+            log_string=(
+                f"Completed local cleanup for column '{column}'. "
+                f"Generated '{pre_col}' with {dataframe[pre_col].notna().sum()} entries."
+            ),
+            level="info",
         )
-        
-        # Create a new column for cleaned names
-        cleaned_column = f"cleaned_{column}"
-        dataframe[cleaned_column] = dataframe[column]
-        
-        # Process unique names in chunks with progress bar
-        progress_bar = tqdm(range(0, total_unique, CHUNK_SIZE), desc=f"Standardizing {column}")
-        for chunk_start in progress_bar:
-            chunk_end = min(chunk_start + CHUNK_SIZE, total_unique)
-            current_chunk = unique_names[chunk_start:chunk_end]
-            
-            # Skip processing if all names in this chunk are already in the backup
-            already_processed = all(name in backup_data.get(column, {}) for name in current_chunk)
-            
-            if already_processed:
-                # Load from backup and map to all occurrences
-                progress_bar.set_postfix_str(f"Loading from backup: {chunk_start}-{chunk_end}")
-                log_message(
-                    folder=STANDARDIZE_PARTY_NAMES_FOLDER,
-                    raw_manifest_filename=raw_manifest_filename,
-                    log_string=f"Loading chunk {chunk_start}-{chunk_end} from backup"
+
+        # 2) Build unique list (exclude empty strings)
+        unique_values = dataframe[pre_col].dropna().astype(str).unique().tolist()
+        unique_values = [u for u in unique_values if u != ""]
+        num_unique = len(unique_values)
+
+        if num_unique == 0:
+            log_message(
+                folder=folder,
+                raw_manifest_filename=raw_manifest_filename,
+                log_string=f"No non-empty values to standardize for column '{column}'. Dropping column.",
+                level="info",
+            )
+            dataframe.drop(columns=[column], inplace=True)
+            continue
+
+        # 3) Create batches of size DATA_CHUNK_SIZE
+        batch_lists = [
+            unique_values[i : i + DATA_CHUNK_SIZE]
+            for i in range(0, num_unique, DATA_CHUNK_SIZE)
+        ]
+        total_batches = len(batch_lists)
+        log_message(
+            folder=folder,
+            raw_manifest_filename=raw_manifest_filename,
+            log_string=(
+                f"Created {total_batches} batches (chunk size {DATA_CHUNK_SIZE}) "
+                f"for column '{column}' with {num_unique} unique values."
+            ),
+            level="info",
+        )
+
+        # 4) Determine how many threads to launch
+        num_threads = min(GEMMA_NUM_THREADS, total_batches)
+        log_message(
+            folder=folder,
+            raw_manifest_filename=raw_manifest_filename,
+            log_string=(
+                f"Configuring ThreadPoolExecutor with {num_threads} threads for column '{column}'."
+            ),
+            level="info",
+        )
+
+        # 5) Use ThreadPoolExecutor with tqdm to track progress
+        final_mapping: dict[str, str] = {}
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
+            future_to_index = {}
+            for i, batch in enumerate(batch_lists):
+                future = executor.submit(
+                    process_batch, batch, column, i, raw_manifest_filename
                 )
-                for name in current_chunk:
-                    cleaned_name = backup_data[column][name]
-                    # Update all rows with this raw name
-                    dataframe.loc[dataframe[column] == name, cleaned_column] = cleaned_name
-            else:
-                # Process the chunk
-                progress_bar.set_postfix_str(f"Processing: {chunk_start}-{chunk_end}")
-                log_message(
-                    folder=STANDARDIZE_PARTY_NAMES_FOLDER,
-                    raw_manifest_filename=raw_manifest_filename,
-                    log_string=f"Processing chunk {chunk_start}-{chunk_end}"
-                )
-                name_map = process_chunk(current_chunk, raw_manifest_filename)
-                
-                # Update DataFrame and backup
-                for raw_name, cleaned_name in name_map.items():
-                    # Update all rows with this raw name
-                    dataframe.loc[dataframe[column] == raw_name, cleaned_column] = cleaned_name
-                    
-                    # Add to backup
-                    if column not in backup_data:
-                        backup_data[column] = {}
-                    backup_data[column][raw_name] = cleaned_name
-                
-                # Save progress to backup file after each chunk
-                with open(backup_file, "w") as f:
-                    json.dump(backup_data, f, indent=2)
-                
-                # Add a small delay between chunks to avoid rate limiting
-                time.sleep(3)
-        
-        # Replace original column with cleaned version
-        dataframe.drop(columns=column, inplace=True)
-        dataframe.rename(columns={cleaned_column: column}, inplace=True)
-    
+                future_to_index[future] = i
+
+            for future in tqdm(
+                as_completed(future_to_index),
+                total=total_batches,
+                desc=f"Processing {column}",
+                ncols=80,
+            ):
+                idx = future_to_index[future]
+                try:
+                    future.result()
+                    log_message(
+                        folder=folder,
+                        raw_manifest_filename=raw_manifest_filename,
+                        log_string=f"Batch {idx} for column '{column}' completed successfully.",
+                        level="info",
+                    )
+                except Exception as e:
+                    log_message(
+                        folder=folder,
+                        raw_manifest_filename=raw_manifest_filename,
+                        log_string=(
+                            f"Unexpected error in batch {idx}, column '{column}': {e}"
+                        ),
+                        level="error",
+                    )
+
+        # 6) Merge all batch JSONs into a single mapping
+        for i in range(total_batches):
+            temp_file = os.path.join(
+                base_temp_folder, f"temp_{column}_cleaned_batch_{i}.json"
+            )
+            if os.path.exists(temp_file):
+                try:
+                    with open(temp_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    final_mapping.update(data)
+                except Exception as e:
+                    log_message(
+                        folder=folder,
+                        raw_manifest_filename=raw_manifest_filename,
+                        log_string=f"Error reading {temp_file}: {e}",
+                        level="error",
+                    )
+        log_message(
+            folder=folder,
+            raw_manifest_filename=raw_manifest_filename,
+            log_string=(
+                f"Merged mappings for column '{column}'. Total mappings: {len(final_mapping)}."
+            ),
+            level="info",
+        )
+
+        # 7) Build cleaned column by mapping pre_cleaned → final; fallback to pre_cleaned
+        cleaned_col = f"cleaned_{column}"
+        dataframe[cleaned_col] = dataframe[pre_col].map(final_mapping)
+        dataframe[cleaned_col] = dataframe[cleaned_col].fillna(dataframe[pre_col])
+        log_message(
+            folder=folder,
+            raw_manifest_filename=raw_manifest_filename,
+            log_string=(
+                f"Built '{cleaned_col}' for column '{column}'. "
+                f"Entries filled: {dataframe[cleaned_col].notna().sum()}."
+            ),
+            level="info",
+        )
+
+        # 8) Drop old columns & rename
+        dataframe.drop(columns=[column, pre_col], inplace=True)
+        dataframe.rename(columns={cleaned_col: column}, inplace=True)
+        log_message(
+            folder=folder,
+            raw_manifest_filename=raw_manifest_filename,
+            log_string=(
+                f"Dropped original column '{column}' and '{pre_col}', renamed '{cleaned_col}' to '{column}'."
+            ),
+            level="info",
+        )
+
+    log_message(
+        folder=folder,
+        raw_manifest_filename=raw_manifest_filename,
+        log_string="Completed standardize_party_names.",
+        level="info",
+    )
     return dataframe

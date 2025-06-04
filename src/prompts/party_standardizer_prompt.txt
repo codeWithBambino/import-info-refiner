@@ -27,11 +27,12 @@ Your job:
         - Replace variations: `CO.`, `CO`, `COMPAN` (Note: Be cautious with `CO` or `CO.`, strongly prefer matching only at the very end of the name).
 
 ⚠️ Rules:
+- Process ALL company names provided in the input JSON.
 - Do NOT include explanations, greetings, or comments.
 - Respond ONLY in the JSON format below — nothing else.
-- Do not add any company names that are not given
-
-
+- Do not add any company names that are not given.
+- Must not skip any company name.
+- Return the exact same number of companies as provided in input.
 
 Output JSON (your response should follow this exact structure):
 {
@@ -42,30 +43,5 @@ Output JSON (your response should follow this exact structure):
   ]
 }
 
-
-Sample Output Data Format JSON for your Reference
-
-*** Sample Output Start
-
-{
-  "Companies": [
-    { "Raw Name": "BDP UGL GLOBAL LOGISTICS (INDIA) P", "Cleaned": "BDP UGL GLOBAL LOGISTICS PRIVATE" },
-    { "Raw Name": "EUSU LOGISTICS INDIA PRIVATE LIMITE", "Cleaned": "EUSU LOGISTICS INDIA PRIVATE LIMITED" },
-    { "Raw Name": "EUSU LOGISTICS INDIA PRIVATE LIMIT", "Cleaned": "EUSU LOGISTICS INDIA PRIVATE LIMITED" },
-    { "Raw Name": "EUSU LOGISTICS INDIA PRIVATE LIMI", "Cleaned": "EUSU LOGISTICS INDIA PRIVATE LIMITED" },
-    { "Raw Name": "EUSU LOGISTICS INDIA PRIVATE LIM", "Cleaned": "EUSU LOGISTICS INDIA PRIVATE LIMITED" },
-    { "Raw Name": "NOBLE SHIPPING PVT LTD", "Cleaned": "NOBLE SHIPPING PRIVATE LIMITED" },
-    { "Raw Name": "TRANSBOX LOGISTICS PVT. LTD.", "Cleaned": "TRANSBOX LOGISTICS PRIVATE LIMITED" },
-    { "Raw Name": "DEVISH EXIM (P) LTD", "Cleaned": "DEVISH EXIM PRIVATE LIMITED" },
-    { "Raw Name": "TRANSMARINUS 115-B, C-205, OVERSEAS WAREHOUSE CO", "Cleaned": "TRANSMARINUS 115-B, C-205, OVERSEAS WAREHOUSE COMPANY" },
-    { "Raw Name": "JINZU CLOTHING COMPANY INC", "Cleaned": "JINZU CLOTHING COMPANY INCORPORATED" },
-    ...
-  ]
-}
-*** Sample Output End here
-
-!!! Original Input Data
-
+Input Data:
 {gemma_custom_input}
-
-!!! Original Input End here

@@ -44,10 +44,10 @@ def setup_logger(folder: str, raw_manifest_filename: str) -> logging.Logger:
         logger.addHandler(file_handler)
 
         # Console handler for errors only
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.ERROR)
-        console_handler.setFormatter(formatter)
-        logger.addHandler(console_handler)
+        # console_handler = logging.StreamHandler()
+        # console_handler.setLevel(logging.ERROR)
+        # console_handler.setFormatter(formatter)
+        # logger.addHandler(console_handler)
 
     return logger
 
