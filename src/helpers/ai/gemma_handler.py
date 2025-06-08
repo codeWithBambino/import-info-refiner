@@ -146,10 +146,10 @@ class GemmaHandler:
                 self.logger.error(f"extract_data: Could not parse assistant content as JSON: {je}")
                 return None
 
-            if "Companies" in parsed and isinstance(parsed["Companies"], list):
+            if "standardized_data" in parsed and isinstance(parsed["standardized_data"], list):
                 return parsed
 
-            self.logger.error("extract_data: parsed JSON has no 'Companies' key or it's not a list")
+            self.logger.error("extract_data: parsed JSON has no 'standardized_data' key or it's not a list")
             return None
 
         except Exception as e:
@@ -159,7 +159,7 @@ class GemmaHandler:
     def process_prompt(self, template_path: str, custom_input: str) -> Optional[Dict[str, Any]]:
         """
         High-level wrapper to build a prompt (via the template), send to Gemma,
-        and return the parsed JSON from the assistant (with "Companies").
+        and return the parsed JSON from the assistant (with "standardized_data").
 
         Args:
             template_path (str): Path to the .txt template file with placeholders.
@@ -176,7 +176,7 @@ class GemmaHandler:
 
             data_payload = self.extract_data(response_data)
             if data_payload is not None:
-                self.logger.info("Gemma returned valid JSON payload with 'Companies'")
+                self.logger.info("Gemma returned valid JSON payload with 'standardized_data'")
                 return data_payload
 
             msg = response_data.get("message", "Unknown error")

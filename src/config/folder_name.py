@@ -19,11 +19,11 @@ STANDARDIZE_PLACE_FOLDER = "5_standardize_place_of_receipt"
 
 CITY_EXTRACTION_FOLDER = "6_7_city_extraction"
 
-# Step 6: Extract Cities from Shipper Address
-CITY_EXTRACTION_FOLDER = "6_shipper_city_extraction"
+# # Step 6: Extract Cities from Shipper Address
+# CITY_EXTRACTION_FOLDER = "6_shipper_city_extraction"
 
-# Step 7: Standardize Cities from Consignee Address
-CONSIGNEE_CITY_EXTRACTION_FOLDER = "7_consignee_city_extraction"
+# # Step 7: Standardize Cities from Consignee Address
+# CONSIGNEE_CITY_EXTRACTION_FOLDER = "7_consignee_city_extraction"
 
 # Step 8: Shipper Entity Classification
 SHIPPER_ENTITY_CLASSIFICATION_FOLDER = "8_shipper_entity_classification"

@@ -8,8 +8,8 @@ GEMMA_HOST = "http://3.109.55.66:11434/v1"
 MODEL = "gemma3:12b"
 
 # Chunking configs
-GEMMA_NUM_THREADS = 6
-DATA_CHUNK_SIZE = 10
+GEMMA_NUM_THREADS = 3
+DATA_CHUNK_SIZE = 30
 
 # Gemma Prompt Paths
 PARTY_STANDARDIZER_PROMPT = os.path.join(BASE_DIR, "src/prompts/party_standardizer_prompt.txt")
@@ -21,7 +21,8 @@ PROCESS_MANIFESTS = os.path.join(BASE_DIR, "data/manifests/processing")
 REFERENCE_DIR = os.path.join(BASE_DIR, "data/reference")
 
 # Columns to standardize
-COLUMNS_TO_STANDARDIZE = ['Shipper', 'Consignee', 'Notify Party 1', 'Notify Party 2']
+PARTY_COLUMNS_TO_STANDARDIZE = ['Shipper', 'Consignee', 'Notify Party 1', 'Notify Party 2']
+ADDRESS_COLUMNS_TO_EXTRACT_CITY = ['Shipper Address', 'Consignee Address']
 
 # Output paths
 OUTPUT_CLEANED = os.path.join(BASE_DIR, "data/manifests/cleaned")

@@ -9,11 +9,8 @@ from src.helpers.logger import log_message
 
 from src.helpers.ai.gemma_handler import GemmaHandler
 from src.helpers.logger import log_message
-from src.config.folder_name import STANDARDIZE_PARTY_NAMES_FOLDER
 from src.config.config import (
-    PARTY_STANDARDIZER_PROMPT,
     TEMP_DIR,
-    COLUMNS_TO_STANDARDIZE,
     GEMMA_NUM_THREADS,   # fixed cap from config
     DATA_CHUNK_SIZE,     # e.g. 10, defined in config.py
 )
@@ -48,15 +45,18 @@ def process_batch(
     column: str,
     batch_index: int,
     raw_manifest_filename: str,
+    STANDARDIZER_PROMPT: str,
+    FOLDER_NAME: str,
+    city_flag:bool
 ):
     """
     Process a list of up to DATA_CHUNK_SIZE pre-cleaned names for 'column'.
-    - Build a single JSON payload: {"Companies":[{"Raw Name": name1}, ...]}
-    - Send to Gemma; extract each "Cleaned" value from response_data["Companies"][i]["Cleaned"].
+    - Build a single JSON payload: {"standardized_data":[{"raw_input": name1}, ...]}
+    - Send to Gemma; extract each "output" value from response_data["standardized_data"][i]["output"].
     - Retries if Gemma errors or returns invalid JSON (up to 3 attempts).
     - Persist partial results to temp_<column>_cleaned_batch_<batch_index>.json so we can resume.
     """
-    folder = STANDARDIZE_PARTY_NAMES_FOLDER
+    folder = FOLDER_NAME
     log_message(
         folder=folder,
         raw_manifest_filename=raw_manifest_filename,
@@ -119,7 +119,7 @@ def process_batch(
         return  # nothing left in this batch
 
     # 3) Build JSON payload for all to_process names
-    payload_dict = {"Companies": [{"Raw Name": name} for name in to_process]}
+    payload_dict = {"standardized_data": [{"raw_input": name} for name in to_process]}
     custom_input = json.dumps(payload_dict)
 
     attempts = 0
@@ -136,7 +136,7 @@ def process_batch(
             level="info",
         )
         try:
-            response = gemma.process_prompt(PARTY_STANDARDIZER_PROMPT, custom_input)
+            response = gemma.process_prompt(STANDARDIZER_PROMPT, custom_input)
         except Exception as e:
             log_message(
                 folder=folder,
@@ -150,19 +150,20 @@ def process_batch(
             time.sleep(5)
             continue
 
-        # Now response should be a dict with top-level "Companies"
+        # Now response should be a dict with top-level "standardized_data"
+        
         if (
             isinstance(response, dict)
-            and "Companies" in response
-            and isinstance(response["Companies"], list)
-            and len(response["Companies"]) == len(to_process)
+            and "standardized_data" in response
+            and isinstance(response["standardized_data"], list)
+            and len(response["standardized_data"]) == len(to_process)
         ):
             valid = True
-            for item in response["Companies"]:
+            for item in response["standardized_data"]:
                 if not (
                     isinstance(item, dict)
-                    and "Raw Name" in item
-                    and "Cleaned" in item
+                    and "raw_input" in item
+                    and "output" in item
                 ):
                     valid = False
                     break
@@ -190,14 +191,15 @@ def process_batch(
 
     # 4) Build final mapping (either from response or fallback)
     final_mapping = {}
-    if response and isinstance(response, dict) and "Companies" in response:
-        for item in response["Companies"]:
-            raw = item.get("Raw Name", "")
-            cleaned = item.get("Cleaned", raw)
+    if response and isinstance(response, dict) and "standardized_data" in response:
+        for item in response["standardized_data"]:
+            raw = item.get("raw_input", "")
+            cleaned = item.get("output", raw)
             final_mapping[raw] = cleaned
     else:
-        for raw in to_process:
-            final_mapping[raw] = raw
+        if city_flag == False:
+            for raw in to_process:
+                final_mapping[raw] = raw
         log_message(
             folder=folder,
             raw_manifest_filename=raw_manifest_filename,
@@ -234,8 +236,8 @@ def process_batch(
         )
 
 
-def standardize_party_names(
-    dataframe: pd.DataFrame, raw_manifest_filename: str
+def standardize_data(
+    dataframe: pd.DataFrame, raw_manifest_filename: str, STANDARDIZER_PROMPT: str, COLUMNS_TO_STANDARDIZE: list[str], FOLDER_NAME: str, city_flag = False
 ) -> pd.DataFrame:
     """
     Standardize each column in COLUMNS_TO_STANDARDIZE by:
@@ -246,11 +248,11 @@ def standardize_party_names(
        wrapped in a tqdm progress bar.
     5) Merge all batch mappings, build cleaned_<column>, drop/rename.
     """
-    folder = STANDARDIZE_PARTY_NAMES_FOLDER
+    folder = FOLDER_NAME
     log_message(
         folder=folder,
         raw_manifest_filename=raw_manifest_filename,
-        log_string="Starting standardize_party_names.",
+        log_string=f"Starting standardizing {folder}.",
         level="info",
     )
 
@@ -335,7 +337,7 @@ def standardize_party_names(
             future_to_index = {}
             for i, batch in enumerate(batch_lists):
                 future = executor.submit(
-                    process_batch, batch, column, i, raw_manifest_filename
+                    process_batch, batch, column, i, raw_manifest_filename, STANDARDIZER_PROMPT, folder, city_flag
                 )
                 future_to_index[future] = i
 
@@ -391,7 +393,12 @@ def standardize_party_names(
         )
 
         # 7) Build cleaned column by mapping pre_cleaned → final; fallback to pre_cleaned
-        cleaned_col = f"cleaned_{column}"
+        
+        if city_flag:
+            cleaned_col = f"{column}_city"
+        else:
+            cleaned_col = f"cleaned_{column}"
+
         dataframe[cleaned_col] = dataframe[pre_col].map(final_mapping)
         dataframe[cleaned_col] = dataframe[cleaned_col].fillna(dataframe[pre_col])
         log_message(
@@ -404,22 +411,22 @@ def standardize_party_names(
             level="info",
         )
 
-        # 8) Drop old columns & rename
-        dataframe.drop(columns=[column, pre_col], inplace=True)
-        dataframe.rename(columns={cleaned_col: column}, inplace=True)
-        log_message(
-            folder=folder,
-            raw_manifest_filename=raw_manifest_filename,
-            log_string=(
-                f"Dropped original column '{column}' and '{pre_col}', renamed '{cleaned_col}' to '{column}'."
-            ),
-            level="info",
-        )
+        # # 8) Drop old columns & rename
+        # dataframe.drop(columns=[column, pre_col], inplace=True)
+        # dataframe.rename(columns={cleaned_col: column}, inplace=True)
+        # log_message(
+        #     folder=folder,
+        #     raw_manifest_filename=raw_manifest_filename,
+        #     log_string=(
+        #         f"Dropped original column '{column}' and '{pre_col}', renamed '{cleaned_col}' to '{column}'."
+        #     ),
+        #     level="info",
+        # )
 
     log_message(
         folder=folder,
         raw_manifest_filename=raw_manifest_filename,
-        log_string="Completed standardize_party_names.",
+        log_string=f"Completed standardizing {folder}.",
         level="info",
     )
     return dataframe
