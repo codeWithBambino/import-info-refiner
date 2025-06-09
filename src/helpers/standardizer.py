@@ -76,6 +76,7 @@ def process_batch(
         try:
             with open(temp_file, "r", encoding="utf-8") as f:
                 batch_mapping = json.load(f)
+
             log_message(
                 folder=folder,
                 raw_manifest_filename=raw_manifest_filename,
@@ -411,18 +412,24 @@ def standardize_data(
             level="info",
         )
 
-        # # 8) Drop old columns & rename
-        # dataframe.drop(columns=[column, pre_col], inplace=True)
-        # dataframe.rename(columns={cleaned_col: column}, inplace=True)
-        # log_message(
-        #     folder=folder,
-        #     raw_manifest_filename=raw_manifest_filename,
-        #     log_string=(
-        #         f"Dropped original column '{column}' and '{pre_col}', renamed '{cleaned_col}' to '{column}'."
-        #     ),
-        #     level="info",
-        # )
-
+        # 8) Drop old columns & rename
+        dataframe.drop(columns=[column, pre_col], inplace=True)
+        if city_flag:
+            # Remove "Address" and create suffix column
+            base_name = column.replace("Address", "").strip().lower()
+            new_col = f"{base_name} City"
+            dataframe.rename(columns={cleaned_col: new_col}, inplace=True)
+        else:
+            dataframe.rename(columns={cleaned_col: column}, inplace=True)
+        log_message(
+            folder=folder,
+            raw_manifest_filename=raw_manifest_filename,
+            log_string=(
+                f"Dropped original column '{column}' and '{pre_col}', renamed '{cleaned_col}' to '{column}'."
+            ),
+            level="info",
+        )
+    
     log_message(
         folder=folder,
         raw_manifest_filename=raw_manifest_filename,

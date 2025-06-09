@@ -9,7 +9,7 @@ MODEL = "gemma3:12b"
 
 # Chunking configs
 GEMMA_NUM_THREADS = 3
-DATA_CHUNK_SIZE = 30
+DATA_CHUNK_SIZE = 10
 
 # Gemma Prompt Paths
 PARTY_STANDARDIZER_PROMPT = os.path.join(BASE_DIR, "src/prompts/party_standardizer_prompt.txt")
