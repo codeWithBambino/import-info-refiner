@@ -43,7 +43,7 @@ def extract_hs_code(dataframe: pd.DataFrame, raw_manifest_filename: str, hs_json
     try:
         dataframe["HS Code List"] = dataframe["Commodity"].apply(extract_hs_codes)
         # Verify using the loaded JSON list
-        dataframe["Verified HS Codes"] = dataframe["HS Code List"].apply(lambda x: hs_code_verifier(x, hs_json_path) if hs_code_verifier(x, hs_json_path) else "")
+        dataframe["Extracted HS Code"] = dataframe["HS Code List"].apply(lambda x: hs_code_verifier(x, hs_json_path) if hs_code_verifier(x, hs_json_path) else "")
         dataframe.drop(columns=["HS Code List"], inplace=True)
         log_message(HS_CODE_EXTRACTION_FOLDER, raw_manifest_filename, "HS Code extraction process completed successfully.", level="info")
     except Exception as e:
