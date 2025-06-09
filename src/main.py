@@ -10,21 +10,22 @@ import shutil
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 # Import requirements for pipeline
-from src.config.config import INPUT_MANIFESTS, PROCESS_MANIFESTS, OUTPUT_CLEANED, REFERENCE_DIR, CLEANED_TEST_DATA_FOLDER, RAW_SHEET_NAME, IMPORT_INFO_TEST_DATASET_URL, COLUMNS_TO_STANDARDIZE
-from src.config.folder_name import REMOVE_DUPLICATES_FOLDER, SHIPPER_ENTITY_CLASSIFICATION_FOLDER, CONSIGNEE_CITY_EXTRACTION_FOLDER, LSP_ENTITY_CLASSIFICATION_FOLDER, PIPELINE_MAIN_PROCESS_FOLDER # Added PIPELINE_MAIN_PROCESS_FOLDER
+from src.config.config import CITY_EXTRACTION_PROMPT, INPUT_MANIFESTS, PARTY_STANDARDIZER_PROMPT, PROCESS_MANIFESTS, OUTPUT_CLEANED, REFERENCE_DIR, CLEANED_TEST_DATA_FOLDER, RAW_SHEET_NAME, IMPORT_INFO_TEST_DATASET_URL, PARTY_COLUMNS_TO_STANDARDIZE,ADDRESS_COLUMNS_TO_EXTRACT_CITY
+from src.config.folder_name import REMOVE_DUPLICATES_FOLDER, SHIPPER_ENTITY_CLASSIFICATION_FOLDER, CONSIGNEE_CITY_EXTRACTION_FOLDER, LSP_ENTITY_CLASSIFICATION_FOLDER, PIPELINE_MAIN_PROCESS_FOLDER, STANDARDIZE_PARTY_NAMES_FOLDER, CITY_EXTRACTION_FOLDER
 from src.helpers.logger import log_message # Imported log_message
 from src.helpers.manual_validator import manual_validator
 from src.helpers.csv_saver import csv_saver
 from src.helpers.google_sheet_handler import read_google_sheet
+from src.helpers.standardizer import standardize_data
 
 # Import pipeline functions
 # from src.helpers.column_cleaner import column_cleaner
 from src.pipeline.duplicate_row_remover import remove_exact_duplicates
 from src.pipeline.deduplicator import deduplicate_by_mbl_container
 from src.pipeline.scac_mapper import map_scac_to_lsp
-from src.pipeline.party_standardizer import party_standardizer
+# from src.pipeline.party_standardizer import standardize_party_names
 from src.pipeline.place_of_receipt_cleaner import standardize_place_of_receipt
-from src.pipeline.city_standardizer import apply_city_extraction
+# from src.pipeline.city_standardizer import apply_city_extraction
 
 from src.pipeline.hs_extractor import extract_hs_code 
 
@@ -71,7 +72,8 @@ def pipeline(test_mode=False):
                     log_string=f"Processing started for {raw_manifest_filename}. Initial Shape: {dataframe.shape}",
                     level="info"
                 )
-
+                # dataframe = dataframe.head(500) # Remove later
+                
                 # Copy initial file to processing directory
                 csv_saver(dataframe, processing_filepath, raw_manifest_filename)
                 
@@ -162,7 +164,7 @@ def pipeline(test_mode=False):
 
             # Step 4: Party Standardization
             try:
-                dataframe = party_standardizer(dataframe, raw_manifest_filename)
+                dataframe = standardize_data(dataframe = dataframe, raw_manifest_filename=raw_manifest_filename, STANDARDIZER_PROMPT=PARTY_STANDARDIZER_PROMPT, COLUMNS_TO_STANDARDIZE=PARTY_COLUMNS_TO_STANDARDIZE, FOLDER_NAME=STANDARDIZE_PARTY_NAMES_FOLDER, city_flag=False)
                 log_message(
                     folder=PIPELINE_MAIN_PROCESS_FOLDER,
                     raw_manifest_filename=raw_manifest_filename,
@@ -171,7 +173,7 @@ def pipeline(test_mode=False):
                 )
 
                 # Manual validation
-                manual_validator("Step 4 Party Names Standardization", main_dataframe, dataframe, column_names=COLUMNS_TO_STANDARDIZE)
+                manual_validator("Step 4 Party Names Standardization", main_dataframe, dataframe, column_names=PARTY_COLUMNS_TO_STANDARDIZE)
                 print("✅ Manual validation completed for Step 4: Party Standardization")
 
                 csv_saver(dataframe, processing_filepath, raw_manifest_filename)
@@ -216,9 +218,9 @@ def pipeline(test_mode=False):
                 )
                 continue # Skip to the next file (will execute outer finally)
 
-            # Step 6: Extract Shipper City from address
+            # Step 6: Extract Shipper/Consignee City from address
             try:
-                dataframe = apply_city_extraction(dataframe, "Shipper Address", "Shipper City",raw_manifest_filename, "india")
+                dataframe = standardize_data(dataframe = dataframe, raw_manifest_filename=raw_manifest_filename, STANDARDIZER_PROMPT=CITY_EXTRACTION_PROMPT, COLUMNS_TO_STANDARDIZE=ADDRESS_COLUMNS_TO_EXTRACT_CITY, FOLDER_NAME=CITY_EXTRACTION_FOLDER, city_flag=True)
                 log_message(
                     folder=PIPELINE_MAIN_PROCESS_FOLDER,
                     raw_manifest_filename=raw_manifest_filename,
@@ -226,7 +228,7 @@ def pipeline(test_mode=False):
                     level="info"
                 )
                 # Manual validation
-                manual_validator("Step 6 Shipper City Extraction", main_dataframe, dataframe, column_names=["Shipper City"])
+                manual_validator("Step 6 Shipper / Consignee City Extraction", main_dataframe, dataframe, column_names=["Shipper City", "Consignee City"])
                 print("✅ Manual validation completed for Step 6: City Extraction")
                 csv_saver(dataframe, processing_filepath, raw_manifest_filename)
                 print(f"✅ Step 6: Shipper City Extraction processed | 📊 Shape: {dataframe.shape}")
@@ -242,32 +244,6 @@ def pipeline(test_mode=False):
                 )
                 continue # Skip to the next file (will execute outer finally)
 
-            # Step 7: Extract Consignee City from address
-            try:
-                dataframe = apply_city_extraction(dataframe, "Consignee Address", "Consignee City",raw_manifest_filename, "us")
-                log_message(
-                    folder=PIPELINE_MAIN_PROCESS_FOLDER,
-                    raw_manifest_filename=raw_manifest_filename,
-                    log_string=f"Step 7: Consignee City Extraction - SUCCESS. Shape: {dataframe.shape}",
-                    level="info"
-                )
-
-                # Manual validation
-                manual_validator("Step 7 Consignee City Extraction", main_dataframe, dataframe, column_names=["Consignee City"])
-                print("✅ Manual validation completed for Step 7: City Extraction")
-                csv_saver(dataframe, processing_filepath, raw_manifest_filename)
-                print(f"✅ Step 7: Consignee City Extraction processed | 📊 Shape: {dataframe.shape}")
-
-            except Exception as e:
-                error_msg = f"Error during Step 7 (Consignee City Extraction) for '{raw_manifest_filename}': {e}"
-                print(error_msg)
-                log_message(
-                    folder=PIPELINE_MAIN_PROCESS_FOLDER,
-                    raw_manifest_filename=raw_manifest_filename,
-                    log_string=f"Step 7: Consignee City Extraction for {raw_manifest_filename} - FAILURE. Error: {e}",
-                    level="error"
-                )
-                continue # Skip to the next file (will execute outer finally)
 
             # Step 11: HS Code Extraction
             try:

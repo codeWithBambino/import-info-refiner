@@ -1,14 +1,18 @@
-import os
+# Gemma
+import re
 import requests
 import json
-import time # Added for retry delay
+import time
 from typing import Dict, Any, Optional
-from src.config.config import GEMMA_HOST, MODEL
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from src.config.config import GEMMA_HOST, MODEL, GEMMA_NUM_THREADS
 from src.helpers.logger import setup_logger
+
 
 class GemmaHandler:
     def __init__(self, log_folder: str = 'gemma'):
-        """Initialize GemmaHandler with logging setup.
+        """
+        Initialize GemmaHandler with logging setup.
 
         Args:
             log_folder (str): Subfolder name for logs (default: 'gemma')
@@ -16,59 +20,47 @@ class GemmaHandler:
         self.logger = setup_logger(log_folder, 'gemma_api.log')
 
     def _prompt_retriever(self, template_path: str, custom_input: str) -> str:
-        """Read a template file and replace placeholder with custom input.
+        """
+        Read a template file and replace placeholders with custom_input.
+
+        Supports both {{INPUT}} and {gemma_custom_input} placeholders.
 
         Args:
-            template_path (str): Path to the template file containing the placeholder
-            custom_input (str): The content to replace the placeholder with
+            template_path (str): Path to the text file containing placeholders.
+            custom_input (str): The string to inject into those placeholders.
 
         Returns:
-            str: The updated prompt with the custom input inserted
-
-        Raises:
-            FileNotFoundError: If the template file does not exist
-            IOError: If there are issues reading the template file
-            ValueError: If the template is invalid or missing required placeholder
+            str: A fully formed prompt ready to send to Gemma.
         """
         try:
-            # Validate template path
-            if not os.path.exists(template_path):
-                error_msg = f"Template file not found: {template_path}"
-                self.logger.error(error_msg)
-                raise FileNotFoundError(error_msg)
-
-            # Read the template file
-            with open(template_path, 'r', encoding='utf-8') as file:
-                template_content = file.read()
-
-            # Validate template contains required placeholder
-            if "{gemma_custom_input}" not in template_content:
-                error_msg = "Template is missing required {gemma_custom_input} placeholder"
-                self.logger.error(error_msg)
-                raise ValueError(error_msg)
-
-            # Replace the placeholder with the custom input
-            updated_prompt = template_content.replace("{gemma_custom_input}", str(custom_input))
-            self.logger.info(f"Successfully generated prompt from template: {template_path}")
-
-            return updated_prompt
-
+            with open(template_path, 'r', encoding='utf-8') as f:
+                template_content = f.read()
+            # Replace both placeholder syntaxes
+            updated = template_content.replace("{{INPUT}}", custom_input)
+            updated = updated.replace("{gemma_custom_input}", custom_input)
+            return updated
         except Exception as e:
-            self.logger.error(f"Error in prompt retriever: {str(e)}", exc_info=True)
+            self.logger.error(f"_prompt_retriever: could not read '{template_path}': {e}")
             raise
 
-    def _ask_gemma(self, prompt: str, retries: int = 3, delay: int = 5) -> Dict[str, Any]:
-        """Send a prompt to the Gemma model using OpenAI-compatible API.
+    def _ask_gemma(self, prompt: str, retries: int = 3, delay: int = 2) -> Dict[str, Any]:
+        """
+        Send the prompt to Gemma’s /chat/completions endpoint and return its JSON response.
+
+        This method logs the raw request payload and raw response JSON with a blank line between
+        for easier debugging.
 
         Args:
-            prompt (str): The prompt/question to ask.
-            retries (int): Number of times to retry the request in case of failure.
-            delay (int): Delay in seconds between retries.
+            prompt (str): The prompt string to send.
+            retries (int): How many times to retry on non-2xx or network error.
+            delay (int): Base backoff in seconds (doubles each retry).
 
         Returns:
-            Dict[str, Any]: Response dictionary containing status_code and other response data
+            Dict[str, Any]: If successful, the JSON-decoded Gemma response;
+                            otherwise a dict with 'status':'error' and a message.
         """
-        # Create payload in OpenAI format
+        url = f"{GEMMA_HOST}/chat/completions"
+        headers = {"Content-Type": "application/json"}
         payload = {
             "model": MODEL,
             "messages": [
@@ -76,168 +68,150 @@ class GemmaHandler:
             ]
         }
 
-        print("PAYLOAD: ", payload)
-
-        # Set headers
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": "Bearer ollama"  # Using "ollama" as the API key
-        }
-
-        # Construct the full URL for chat completions
-        endpoint = f"{GEMMA_HOST}/chat/completions"
-
-        last_exception = None
-
-        for attempt in range(retries):
+        for attempt in range(1, retries + 1):
             try:
-                self.logger.debug(f"Sending prompt to Gemma model {MODEL} (Attempt {attempt + 1}/{retries}): {prompt[:50]}...")
-                response = requests.post(endpoint, json=payload, headers=headers, timeout=60) # Added timeout
+                # Log the raw request payload
+                self.logger.info(f"REQUEST: {json.dumps(payload, ensure_ascii=False)}\n")
+                self.logger.info(f"→ [Attempt {attempt}/{retries}] POST to {url}")
+                start_time = time.time()
 
-                # Check if the request was successful
-                if response.status_code == 200:
-                    response_data = response.json()
+                response = requests.post(url, headers=headers, json=payload, timeout=60)
 
-                    # Extract content from the response
-                    if response_data.get("choices") and len(response_data["choices"]) > 0:
-                        content = response_data["choices"][0].get("message", {}).get("content", "")
+                elapsed = time.time() - start_time
+                status = response.status_code
 
-                        try:
-                            # Find JSON content (sometimes models wrap JSON in markdown code blocks)
-                            if "```json" in content:
-                                json_text = content.split("```json")[1].split("```")[0].strip()
-                            elif "```" in content:
-                                json_text = content.split("```")[1].split("```")[0].strip()
-                            else:
-                                json_text = content.strip()
+                # Log the raw response JSON
+                try:
+                    text = response.text
+                    self.logger.info(f"\nRESPONSE: {text}\n")
+                except Exception as e:
+                    self.logger.error(f"Failed to read response text: {e}")
 
-                            result = json.loads(json_text)
-                            self.logger.debug("Successfully parsed JSON response")
-                            return {"status": "success", "status_code": 200, "data": result}
-                        except json.JSONDecodeError as je:
-                            self.logger.warning(f"Failed to parse JSON response: {je}")
-                            # Don't retry on JSON parse error, as it's a model response issue
-                            return {
-                                "status": "error",
-                                "status_code": 400,
-                                "error": "JSON_PARSE_ERROR",
-                                "message": "Model did not return valid JSON",
-                                "raw_response": content
-                            }
-                    else:
-                        error_msg = "No choices found in response"
-                        self.logger.error(error_msg)
-                        # Don't retry if no choices, likely a persistent issue or bad prompt
-                        return {
-                            "status": "error",
-                            "status_code": 500,
-                            "error": "RESPONSE_ERROR",
-                            "message": error_msg,
-                            "raw_response": response.text
-                        }
+                self.logger.info(f"← [Attempt {attempt}/{retries}] HTTP {status} (took {elapsed:.1f}s)")
+
+                if 200 <= status < 300:
+                    try:
+                        return response.json()
+                    except json.JSONDecodeError as je:
+                        self.logger.error(f"JSON decode error from Gemma: {je}")
+                        return {"status": "error", "message": "Invalid JSON from Gemma"}
                 else:
-                    error_msg = f"Request failed with status code {response.status_code}: {response.text}"
-                    self.logger.error(error_msg)
-                    # Retry for server-side errors (5xx) or specific client errors if appropriate
-                    if 500 <= response.status_code < 600:
-                        last_exception = requests.exceptions.HTTPError(error_msg)
-                        self.logger.info(f"Retrying in {delay} seconds...")
-                        time.sleep(delay)
-                        continue # Retry the loop
-                    else:
-                        # For other client errors (4xx), don't retry unless specific ones are known to be transient
-                        return {
-                            "status": "error",
-                            "status_code": response.status_code,
-                            "error": "API_CLIENT_ERROR",
-                            "message": error_msg
-                        }
+                    text_snippet = response.text[:200]
+                    self.logger.warning(
+                        f"Attempt {attempt} returned HTTP {status}: {text_snippet}"
+                    )
 
-            except requests.exceptions.RequestException as e:
-                error_msg = f"Error talking to Gemma (Attempt {attempt + 1}/{retries}): {str(e)}"
-                self.logger.error(error_msg, exc_info=False) # exc_info=False to avoid repetitive tracebacks in logs for retries
-                last_exception = e
-                if attempt < retries - 1:
-                    self.logger.info(f"Retrying in {delay} seconds...")
-                    time.sleep(delay)
-                else:
-                    self.logger.error(f"All {retries} retries failed.")
-                    break # Exit loop after last attempt
-        
-        # If all retries failed, return the last known error
-        final_error_msg = f"Error talking to Gemma after {retries} retries: {str(last_exception)}"
-        self.logger.error(final_error_msg, exc_info=True if last_exception else False)
-        return {
-            "status": "error",
-            "status_code": 500, # Generic server error after retries
-            "error": "API_CONNECTION_ERROR",
-            "message": final_error_msg
-        }
+            except requests.exceptions.RequestException as rexc:
+                elapsed = time.time() - start_time
+                self.logger.error(
+                    f"⚠ [Attempt {attempt}/{retries}] network error after {elapsed:.1f}s: {rexc}"
+                )
 
-    def process_prompt(self, template_path: str, custom_input: str) -> Dict[str, Any]:
-        """Process a prompt using a template and custom input.
+            if attempt < retries:
+                sleep_time = delay * (2 ** (attempt - 1))
+                self.logger.info(f"⏳ Sleeping {sleep_time}s before retry #{attempt+1}")
+                time.sleep(sleep_time)
 
-        Args:
-            template_path (str): Path to the prompt template file
-            custom_input (str): Custom input to insert into the template
-
-        Returns:
-            Dict[str, Any]: Response dictionary containing either the success response data
-            or error information with status and message.
-        """
-        try:
-            # Get the prompt from template
-            try:
-                prompt = self._prompt_retriever(template_path, custom_input)
-            except Exception as e:
-                error_msg = f"Failed to process prompt template: {str(e)}"
-                self.logger.error(error_msg)
-                return {
-                    "status": "error",
-                    "error": "TEMPLATE_PROCESSING_ERROR",
-                    "message": error_msg
-                }
-
-            # Call Gemma API
-            response = self._ask_gemma(prompt)
-
-            # Log the response based on status
-            if isinstance(response, dict) and response.get('status') == 'success':
-                self.logger.info("Successfully processed prompt with Gemma API")
-                return response
-            else:
-                error_msg = response.get('message', 'Unknown error occurred')
-                self.logger.error(f"Gemma API request failed: {error_msg}")
-                return {
-                    "status": "error",
-                    "error": "API_ERROR",
-                    "message": error_msg
-                }
-
-        except Exception as e:
-            error_msg = f"Unexpected error in process_prompt: {str(e)}"
-            self.logger.error(error_msg, exc_info=True)
-            return {
-                "status": "error",
-                "error": "PROCESSING_ERROR",
-                "message": error_msg
-            }
+        err_msg = "Gemma API request failed after retries"
+        self.logger.error(err_msg)
+        return {"status": "error", "message": err_msg}
 
     def extract_data(self, response_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Extract and validate data from a successful Gemma response.
-
-        Args:
-            response_data (Dict[str, Any]): The response data from process_prompt
-
-        Returns:
-            Optional[Dict[str, Any]]: Extracted data if successful, None if invalid
+        """
+        Parse the chat-completions response, extract the assistant's content,
+        strip markdown/code block if present, and convert it to a Python dict.
         """
         try:
-            if response_data.get('status') == 'success' and 'data' in response_data:
-                return response_data['data']
+            choices = response_data.get("choices")
+            if not choices or not isinstance(choices, list):
+                self.logger.error("extract_data: 'choices' missing or not a list")
+                return None
+
+            assistant_msg = choices[0].get("message", {}).get("content", "")
+            if not isinstance(assistant_msg, str) or not assistant_msg.strip():
+                self.logger.error("extract_data: assistant 'content' is empty or not a string")
+                return None
+
+            # 🟡 NEW: If wrapped in code block, extract only the code part
+            # Handles ```json ... ``` or just ``` ... ```
+            match = re.search(r"```(?:json)?\s*(.*?)\s*```", assistant_msg, re.DOTALL)
+            if match:
+                json_str = match.group(1)
+            else:
+                json_str = assistant_msg
+
+            try:
+                parsed = json.loads(json_str)
+            except json.JSONDecodeError as je:
+                self.logger.error(f"extract_data: Could not parse assistant content as JSON: {je}")
+                return None
+
+            if "standardized_data" in parsed and isinstance(parsed["standardized_data"], list):
+                return parsed
+
+            self.logger.error("extract_data: parsed JSON has no 'standardized_data' key or it's not a list")
             return None
+
         except Exception as e:
-            self.logger.error(f"Error extracting data from response: {str(e)}")
+            self.logger.error(f"extract_data: Unexpected exception: {e}")
+        return None
+
+    def process_prompt(self, template_path: str, custom_input: str) -> Optional[Dict[str, Any]]:
+        """
+        High-level wrapper to build a prompt (via the template), send to Gemma,
+        and return the parsed JSON from the assistant (with "standardized_data").
+
+        Args:
+            template_path (str): Path to the .txt template file with placeholders.
+            custom_input (str): The chunk of names or instructions to inject.
+
+        Returns:
+            Optional[Dict[str,Any]]: The parsed JSON dict returned by Gemma’s assistant,
+                                     or None if any step fails.
+        """
+        try:
+            final_prompt = self._prompt_retriever(template_path, custom_input)
+            self.logger.info("Sending prompt to Gemma (process_prompt)…")
+            response_data = self._ask_gemma(final_prompt)
+
+            data_payload = self.extract_data(response_data)
+            if data_payload is not None:
+                self.logger.info("Gemma returned valid JSON payload with 'standardized_data'")
+                return data_payload
+
+            msg = response_data.get("message", "Unknown error")
+            self.logger.error(f"Gemma processing failed or returned no data: {msg}")
             return None
 
+        except Exception as e:
+            self.logger.error(f"process_prompt: Unexpected exception: {e}")
+            return None
 
+    def process_prompts(self, tasks: list[tuple[str, str]]) -> list[Optional[Dict[str, Any]]]:
+        """
+        Send multiple prompts in parallel (up to GEMMA_NUM_THREADS concurrent calls).
+
+        Args:
+            tasks (List[(template_path, custom_input)]):
+                Each tuple is (path_to_template, the_input_string).
+        Returns:
+            List[Optional[Dict]]: Result list in the same order as `tasks`. Each element
+                                  is the parsed JSON dict from Gemma or None on failure.
+        """
+        results: list[Optional[Dict[str, Any]]] = [None] * len(tasks)
+
+        with ThreadPoolExecutor(max_workers=GEMMA_NUM_THREADS) as executor:
+            future_to_idx = {}
+            for idx, (template_path, custom_input) in enumerate(tasks):
+                future = executor.submit(self.process_prompt, template_path, custom_input)
+                future_to_idx[future] = idx
+
+            for future in as_completed(future_to_idx):
+                idx = future_to_idx[future]
+                try:
+                    results[idx] = future.result()
+                except Exception as e:
+                    self.logger.error(f"process_prompts: Task {idx} raised exception: {e}")
+                    results[idx] = None
+
+        return results

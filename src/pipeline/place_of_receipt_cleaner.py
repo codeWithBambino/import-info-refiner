@@ -17,8 +17,7 @@ def clean_place_name_regex(raw):
     raw = re.sub(r'\s+', ' ', raw).strip()
 
     # Replace known bad abbreviations or incomplete codes
-    if raw in {"M", "HLCU", "RAIL", "HIND", "TUGHL", "JAWAHARLAL", "GRFL"}:
-        return "UNKNOWN"
+
     if raw == "INMUN":
         return "MUNDRA"
 
@@ -113,7 +112,7 @@ def standardize_place_of_receipt(dataframe: pd.DataFrame, column_name:str ,raw_m
 
     os.makedirs(os.path.join('logs', STANDARDIZE_PLACE_FOLDER), exist_ok=True)
 
-    if unmatched:
-        pd.DataFrame(unmatched).drop_duplicates(subset=['Original', 'Cleaned']).to_csv(f'logs/{STANDARDIZE_PLACE_FOLDER}/unmatched_{raw_manifest_filename}', index=False)
+    # if unmatched:
+    #     pd.DataFrame(unmatched).drop_duplicates(subset=['Original', 'Cleaned']).to_csv(f'logs/{STANDARDIZE_PLACE_FOLDER}/unmatched_{raw_manifest_filename}', index=False)
 
     return dataframe
