@@ -23,10 +23,7 @@ from src.helpers.standardizer import standardize_data
 from src.pipeline.duplicate_row_remover import remove_exact_duplicates
 from src.pipeline.deduplicator import deduplicate_by_mbl_container
 from src.pipeline.scac_mapper import map_scac_to_lsp
-# from src.pipeline.party_standardizer import standardize_party_names
 from src.pipeline.place_of_receipt_cleaner import standardize_place_of_receipt
-# from src.pipeline.city_standardizer import apply_city_extraction
-
 from src.pipeline.hs_extractor import extract_hs_code 
 
 # Starting the file processing Life Cycle
@@ -254,6 +251,9 @@ def pipeline(test_mode=False):
                     log_string=f"Step 11: HS Code Extraction - SUCCESS. Shape: {dataframe.shape}",
                     level="info"
                 )
+
+                csv_saver(dataframe, processing_filepath, raw_manifest_filename)
+                print(f"✅ Step 11: HS Code Extraction processed | 📊 Shape: {dataframe.shape}")
             except Exception as e:
                 error_msg = f"Error during Step 11 (HS Code Extraction) for '{raw_manifest_filename}': {e}"
                 print(error_msg)
