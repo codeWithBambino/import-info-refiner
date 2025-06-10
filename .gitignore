@@ -34,9 +34,7 @@ logs/
 
 # Temporary files
 *manual_validation/
-data/manifests/cleaned/
-data/manifests/processing/
-data/manifests/raw/
+data/manifests/
 data/temp/
 *temp.py
 *.pdf

@@ -30,5 +30,8 @@ SHIPPER_ENTITY_CLASSIFICATION_FOLDER = "8_shipper_entity_classification"
 CONSIGNEE_CITY_EXTRACTION_FOLDER = "8_consignee_entity_classification"
 LSP_ENTITY_CLASSIFICATION_FOLDER = "8_lsp_entity_classification"
 
+# Step 9: Entity Classification
+ENTITY_CLASSIFICATION_FOLDER = "9_entity_classification"  
+
 # Step 11: HS Code Extraction
 HS_CODE_EXTRACTION_FOLDER = "11_hs_code_extraction"

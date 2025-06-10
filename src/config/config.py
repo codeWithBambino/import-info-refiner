@@ -7,6 +7,10 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
 GEMMA_HOST = "http://3.109.55.66:11434/v1"
 MODEL = "gemma3:12b"
 
+# Gemini
+GEMINI_API_KEY = "AIzaSyAFBjrlvgBEtmiaPClHJSrrHGAHrf8T0ys"
+GEMINI_MODEL = "gemini-2.0-flash-001"
+
 # Chunking configs
 GEMMA_NUM_THREADS = 3
 DATA_CHUNK_SIZE = 10
@@ -14,6 +18,7 @@ DATA_CHUNK_SIZE = 10
 # Gemma Prompt Paths
 PARTY_STANDARDIZER_PROMPT = os.path.join(BASE_DIR, "src/prompts/party_standardizer_prompt.txt")
 CITY_EXTRACTION_PROMPT = os.path.join(BASE_DIR, "src/prompts/city_extraction_prompt.txt")
+ENTITY_CLASSIFICATION_PROMPT = os.path.join(BASE_DIR, "src/prompts/entity_classification_prompt.txt")
 
 # Input paths
 INPUT_MANIFESTS = os.path.join(BASE_DIR, "data/manifests/raw")
@@ -23,6 +28,11 @@ REFERENCE_DIR = os.path.join(BASE_DIR, "data/reference")
 # Columns to standardize
 PARTY_COLUMNS_TO_STANDARDIZE = ['Shipper', 'Consignee', 'Notify Party 1', 'Notify Party 2']
 ADDRESS_COLUMNS_TO_EXTRACT_CITY = ['Shipper Address', 'Consignee Address']
+
+# Columns to classify
+ENTITY_COLUMNS_TO_CLASSIFY = ['Shipper', 'Consignee']
+ENTITY_CHUNK_SIZE = 50
+MANUAL_CLASSIFICATION_FOLDER_PATH = os.path.join(BASE_DIR, "data/manifests/manual_classification")
 
 # Output paths
 OUTPUT_CLEANED = os.path.join(BASE_DIR, "data/manifests/cleaned")

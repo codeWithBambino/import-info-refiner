@@ -25,6 +25,7 @@ from src.pipeline.deduplicator import deduplicate_by_mbl_container
 from src.pipeline.scac_mapper import map_scac_to_lsp
 from src.pipeline.place_of_receipt_cleaner import standardize_place_of_receipt
 from src.pipeline.hs_extractor import extract_hs_code 
+from src.pipeline.entity_classifier import classify_entities
 
 # Starting the file processing Life Cycle
 def pipeline(test_mode=False):
@@ -241,6 +242,31 @@ def pipeline(test_mode=False):
                 )
                 continue # Skip to the next file (will execute outer finally)
 
+            # Step 7: Entity Classification
+            try:
+                dataframe = classify_entities(dataframe, raw_manifest_filename)
+                log_message(
+                    folder=PIPELINE_MAIN_PROCESS_FOLDER,
+                    raw_manifest_filename=raw_manifest_filename,
+                    log_string=f"Step 7: Entity Classification - SUCCESS. Shape: {dataframe.shape}",
+                    level="info"
+                )
+                # Manual validation
+                manual_validator("Step 7 Entity Classification", main_dataframe, dataframe, column_names=["Shipper", "Consignee"])
+                print("✅ Manual validation completed for Step 7: Entity Classification")
+                csv_saver(dataframe, processing_filepath, raw_manifest_filename)
+                print(f"✅ Step 7: Entity Classification processed | 📊 Shape: {dataframe.shape}")
+            
+            except Exception as e:
+                error_msg = f"Error during Step 7 (Entity Classification) for '{raw_manifest_filename}': {e}"
+                print(error_msg)
+                log_message(
+                    folder=PIPELINE_MAIN_PROCESS_FOLDER,
+                    raw_manifest_filename=raw_manifest_filename,
+                    log_string=f"Step 7: Entity Classification for {raw_manifest_filename} - FAILURE. Error: {e}",
+                    level="error"
+                )
+                continue # Skip to the next file (will execute outer finally)
 
             # Step 11: HS Code Extraction
             try:
