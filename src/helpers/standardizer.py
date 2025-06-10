@@ -64,7 +64,7 @@ def process_batch(
         level="info",
     )
 
-    temp_folder = os.path.join(TEMP_DIR, folder)
+    temp_folder = os.path.join(TEMP_DIR, raw_manifest_filename, folder)
     os.makedirs(temp_folder, exist_ok=True)
 
     temp_file = os.path.join(
