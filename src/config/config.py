@@ -32,7 +32,7 @@ ADDRESS_COLUMNS_TO_EXTRACT_CITY = ['Shipper Address', 'Consignee Address']
 # Columns to classify
 ENTITY_COLUMNS_TO_CLASSIFY = ['Shipper', 'Consignee']
 ENTITY_CHUNK_SIZE = 50
-MANUAL_CLASSIFICATION_FOLDER_PATH = os.path.join(BASE_DIR, "data/manifests/manual_classification")
+MANUAL_CLASSIFICATION_FOLDER_PATH = os.path.join(BASE_DIR, "data/reference/manual_classification")
 
 # Output paths
 OUTPUT_CLEANED = os.path.join(BASE_DIR, "data/manifests/cleaned")
@@ -45,9 +45,6 @@ LOG_DIR = os.path.join(BASE_DIR, "logs")
 
 # Cities json path
 CITIES_FILE = os.path.join(BASE_DIR, "data/reference/cities.json")
-
-# Entity Category json path
-ENTITY_CATEGORY_FILE = os.path.join(BASE_DIR, "data/reference/entity_category.json")
 
 # HS Code json path
 HS_CODE_FILE = os.path.join(BASE_DIR, "data/reference/hscodes.json")

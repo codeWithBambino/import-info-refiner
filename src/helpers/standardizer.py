@@ -11,8 +11,8 @@ from src.helpers.ai.gemma_handler import GemmaHandler
 from src.helpers.logger import log_message
 from src.config.config import (
     TEMP_DIR,
-    GEMMA_NUM_THREADS,   # fixed cap from config
-    DATA_CHUNK_SIZE,     # e.g. 10, defined in config.py
+    GEMMA_NUM_THREADS,
+    DATA_CHUNK_SIZE,
 )
 from src.config.abbreviations import ABBREVIATIONS, UNWANTED_TOKENS
 
