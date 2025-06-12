@@ -39,7 +39,6 @@ def local_clean_name(name: str) -> str:
     # 7. Rejoin into a single string
     return " ".join(tokens)
 
-
 def process_batch(
     batch_values: list[str],
     column: str,
@@ -47,7 +46,7 @@ def process_batch(
     raw_manifest_filename: str,
     STANDARDIZER_PROMPT: str,
     FOLDER_NAME: str,
-    city_flag:bool
+    city_flag: bool
 ):
     """
     Process a list of up to DATA_CHUNK_SIZE pre-cleaned names for 'column'.
@@ -117,15 +116,19 @@ def process_batch(
             log_string=f"No names left to process in batch {batch_index} for column '{column}'.",
             level="info",
         )
-        return  # nothing left in this batch
+        return batch_mapping  # Return existing mapping if nothing to process
 
     # 3) Build JSON payload for all to_process names
-    payload_dict = {"standardized_data": [{"raw_input": name} for name in to_process]}
+    payload_dict = {
+        "standardized_data": [{"raw_input": name} for name in to_process]
+    }
     custom_input = json.dumps(payload_dict)
 
     attempts = 0
     response = None
-    while attempts < 3:
+    valid_response = False
+    
+    while attempts < 3 and not valid_response:
         attempts += 1
         log_message(
             folder=folder,
@@ -151,8 +154,24 @@ def process_batch(
             time.sleep(5)
             continue
 
-        # Now response should be a dict with top-level "standardized_data"
-        
+        # ── Parse JSON string into dict if needed ──
+        if isinstance(response, str):
+            try:
+                response = json.loads(response)
+            except json.JSONDecodeError as e:
+                log_message(
+                    folder=folder,
+                    raw_manifest_filename=raw_manifest_filename,
+                    log_string=(
+                        f"Failed to JSON-parse Gemma response for batch {batch_index}, "
+                        f"column '{column}': {e}. Falling back to identity mapping."
+                    ),
+                    level="error",
+                )
+                response = None
+                continue
+
+        # ── Validate response structure ──
         if (
             isinstance(response, dict)
             and "standardized_data" in response
@@ -168,7 +187,9 @@ def process_batch(
                 ):
                     valid = False
                     break
+            
             if valid:
+                valid_response = True
                 log_message(
                     folder=folder,
                     raw_manifest_filename=raw_manifest_filename,
@@ -177,40 +198,63 @@ def process_batch(
                     ),
                     level="info",
                 )
-                break
-
-        log_message(
-            folder=folder,
-            raw_manifest_filename=raw_manifest_filename,
-            log_string=(
-                f"Invalid response structure from Gemma for batch {batch_index}, "
-                f"column '{column}', attempt {attempts}/3. Retrying in 2s."
-            ),
-            level="error",
-        )
-        time.sleep(2)
+            else:
+                log_message(
+                    folder=folder,
+                    raw_manifest_filename=raw_manifest_filename,
+                    log_string=(
+                        f"Invalid item structure in response for batch {batch_index}, "
+                        f"column '{column}', attempt {attempts}/3. Retrying in 2s."
+                    ),
+                    level="error",
+                )
+                time.sleep(2)
+        else:
+            log_message(
+                folder=folder,
+                raw_manifest_filename=raw_manifest_filename,
+                log_string=(
+                    f"Invalid response structure from Gemma for batch {batch_index}, "
+                    f"column '{column}', attempt {attempts}/3. Retrying in 2s."
+                ),
+                level="error",
+            )
+            time.sleep(2)
 
     # 4) Build final mapping (either from response or fallback)
     final_mapping = {}
-    if response and isinstance(response, dict) and "standardized_data" in response:
+
+    if valid_response and response and isinstance(response, dict) and "standardized_data" in response:
         for item in response["standardized_data"]:
-            raw = item.get("raw_input", "")
-            cleaned = item.get("output", raw)
-            final_mapping[raw] = cleaned
+            raw = item.get("raw_input")
+            cleaned = item.get("output")
+
+            if raw is not None and cleaned is not None:
+                final_mapping[raw.strip()] = cleaned.strip()
+            else:
+                log_message(
+                    folder=folder,
+                    raw_manifest_filename=raw_manifest_filename,
+                    log_string=f"❌ Invalid item in Gemma response: {item}",
+                    level="error"
+                )
     else:
-        if city_flag == False:
+        # Fallback: use identity mapping only if not city_flag
+        if not city_flag:
             for raw in to_process:
-                final_mapping[raw] = raw
+                final_mapping[raw.strip()] = raw.strip()
+
         log_message(
             folder=folder,
             raw_manifest_filename=raw_manifest_filename,
             log_string=(
                 f"Max retries reached or invalid JSON for batch {batch_index}, column '{column}'. "
-                f"Falling back to pre-cleaned names."
+                f"{'Using identity mapping.' if not city_flag else 'Skipping mapping due to city_flag.'}"
             ),
             level="error",
         )
 
+    # Update batch_mapping with new results
     batch_mapping.update(final_mapping)
 
     # 5) Persist to temp file
@@ -236,6 +280,8 @@ def process_batch(
             level="error",
         )
 
+    # 6) Return the complete batch mapping
+    return batch_mapping
 
 def standardize_data(
     dataframe: pd.DataFrame, raw_manifest_filename: str, STANDARDIZER_PROMPT: str, COLUMNS_TO_STANDARDIZE: list[str], FOLDER_NAME: str, city_flag = False
@@ -334,6 +380,7 @@ def standardize_data(
 
         # 5) Use ThreadPoolExecutor with tqdm to track progress
         final_mapping: dict[str, str] = {}
+
         with ThreadPoolExecutor(max_workers=num_threads) as executor:
             future_to_index = {}
             for i, batch in enumerate(batch_lists):
@@ -350,13 +397,28 @@ def standardize_data(
             ):
                 idx = future_to_index[future]
                 try:
-                    future.result()
-                    log_message(
-                        folder=folder,
-                        raw_manifest_filename=raw_manifest_filename,
-                        log_string=f"Batch {idx} for column '{column}' completed successfully.",
-                        level="info",
-                    )
+                    batch_mapping = future.result()  # Get mapping from that thread
+                    
+                    # Handle case where batch_mapping might be None or empty
+                    if batch_mapping and isinstance(batch_mapping, dict):
+                        # Merge the batch mapping into final mapping
+                        for k, v in batch_mapping.items():
+                            if k and v:  # Ensure both key and value are not empty
+                                final_mapping[k.strip()] = v.strip()
+                        
+                        log_message(
+                            folder=folder,
+                            raw_manifest_filename=raw_manifest_filename,
+                            log_string=f"Batch {idx} for column '{column}' completed successfully with {len(batch_mapping)} mappings.",
+                            level="info",
+                        )
+                    else:
+                        log_message(
+                            folder=folder,
+                            raw_manifest_filename=raw_manifest_filename,
+                            log_string=f"Batch {idx} for column '{column}' returned empty or invalid mapping.",
+                            level="warning",
+                        )
                 except Exception as e:
                     log_message(
                         folder=folder,
@@ -394,14 +456,30 @@ def standardize_data(
         )
 
         # 7) Build cleaned column by mapping pre_cleaned → final; fallback to pre_cleaned
-        
+
         if city_flag:
             cleaned_col = f"{column}_city"
         else:
             cleaned_col = f"cleaned_{column}"
 
+        # Normalize mapping keys and DataFrame column values
+        final_mapping = {k.strip(): v for k, v in final_mapping.items()}
+        dataframe[pre_col] = dataframe[pre_col].astype(str).str.strip()
+
+        # Debug logs
+        print("NORMALIZED ITEMS:", dataframe[pre_col].tolist())
+        print("FINAL MAPPING:", final_mapping)
+
+        # Apply mapping to get cleaned column
         dataframe[cleaned_col] = dataframe[pre_col].map(final_mapping)
         dataframe[cleaned_col] = dataframe[cleaned_col].fillna(dataframe[pre_col])
+
+        # Show unmapped values (optional)
+        not_mapped = dataframe[~dataframe[pre_col].isin(final_mapping.keys())]
+        if not not_mapped.empty:
+            print("❌ Not Mapped Values:", not_mapped[pre_col].tolist())
+
+        # Log status
         log_message(
             folder=folder,
             raw_manifest_filename=raw_manifest_filename,
@@ -417,7 +495,7 @@ def standardize_data(
         if city_flag:
             # Remove "Address" and create suffix column
             base_name = column.replace("Address", "").strip().lower()
-            new_col = f"{base_name} City"
+            new_col = f"{base_name.capitalize()} City"
             dataframe.rename(columns={cleaned_col: new_col}, inplace=True)
         else:
             dataframe.rename(columns={cleaned_col: column}, inplace=True)
