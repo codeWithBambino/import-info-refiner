@@ -466,10 +466,6 @@ def standardize_data(
         final_mapping = {k.strip(): v for k, v in final_mapping.items()}
         dataframe[pre_col] = dataframe[pre_col].astype(str).str.strip()
 
-        # Debug logs
-        print("NORMALIZED ITEMS:", dataframe[pre_col].tolist())
-        print("FINAL MAPPING:", final_mapping)
-
         # Apply mapping to get cleaned column
         dataframe[cleaned_col] = dataframe[pre_col].map(final_mapping)
         dataframe[cleaned_col] = dataframe[cleaned_col].fillna(dataframe[pre_col])
