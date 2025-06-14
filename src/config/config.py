@@ -44,7 +44,7 @@ TEMP_DIR = os.path.join(BASE_DIR, "data/temp")
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 
 # Cities json path
-CITIES_FILE = os.path.join(BASE_DIR, "data/reference/cities.json")
+CITIES_JSON_PATH = os.path.join(BASE_DIR, "data/reference/cities.json")
 
 # HS Code json path
 HS_CODE_FILE = os.path.join(BASE_DIR, "data/reference/hscodes.json")

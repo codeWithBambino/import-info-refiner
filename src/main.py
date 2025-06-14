@@ -17,6 +17,7 @@ from src.helpers.manual_validator import manual_validator
 from src.helpers.csv_saver import csv_saver
 from src.helpers.google_sheet_handler import read_google_sheet
 from src.helpers.standardizer import standardize_data
+from src.helpers.city_verifier import city_verifier
 
 # Import pipeline functions
 # from src.helpers.column_cleaner import column_cleaner
@@ -229,6 +230,8 @@ def pipeline(test_mode=False):
                 # Manual validation
                 manual_validator("Step 6 Shipper / Consignee City Extraction", main_dataframe, dataframe, column_names=["Shipper City", "Consignee City"])
                 print("✅ Manual validation completed for Step 6: City Extraction")
+                dataframe = city_verifier(dataframe, ["Shipper City", "Consignee City"])
+                print("✅ City Verification completed for Step 6: City Extraction")
                 csv_saver(dataframe, processing_filepath, raw_manifest_filename)
                 print(f"✅ Step 6: Shipper City Extraction processed | 📊 Shape: {dataframe.shape}")
 
