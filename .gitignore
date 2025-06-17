@@ -36,5 +36,6 @@ logs/
 *manual_validation/
 data/manifests/
 data/temp/
-*temp.py
+temp_*
+temp*
 *.pdf
