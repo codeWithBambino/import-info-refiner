@@ -53,6 +53,7 @@ def map_scac_to_lsp(df: pd.DataFrame, scac_df: pd.DataFrame, raw_manifest_filena
         merged_df = df.merge(scac_df, how="left", left_on="Carrier Code", right_on="SCAC")
         merged_df["LSP"] = merged_df["Company name"]
         merged_df.drop(columns=["Country", "Company name", "SCAC"], inplace=True)
+        merged_df.rename(columns={"Category": "LSP Category"}, inplace=True)
 
         unmapped_count = merged_df["LSP"].isna().sum()
         log_message(

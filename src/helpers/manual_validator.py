@@ -17,24 +17,24 @@ def manual_validator(step_name: str,
                      left_on: list[str] = None,
                      right_on: list[str] = None):
     """
-    Compares two pandas DataFrames based on a common 'RowID' index and
+    Compares two pandas DataFrames based on a common 'ID' index and
     identifies differences in specified or all columns, saving the results
     for manual validation.
 
     Args:
         step_name (str): Name of the processing step. Used for the output filename.
         raw_dataframe (pd.DataFrame): The first DataFrame (e.g., raw data).
-                                     Must contain a 'RowID' column.
+                                     Must contain a 'ID' column.
         cleaned_dataframe (pd.DataFrame): The second DataFrame (e.g., cleaned data).
-                                        Must contain a 'RowID' column.
+                                        Must contain a 'ID' column.
         column_names (list[str], optional): List of columns to compare. If None or empty,
-                                            all common columns (except 'RowID') are compared.
+                                            all common columns (except 'ID') are compared.
         left_on (list[str], optional): List of column names from raw_dataframe to compare.
                                        Must be used together with right_on and be of same length.
         right_on (list[str], optional): List of column names from cleaned_dataframe to compare.
                                         Must be used together with left_on and be of same length.
     Raises:
-        ValueError: If 'RowID' column is missing in either DataFrame or if left_on/right_on parameters are invalid.
+        ValueError: If 'ID' column is missing in either DataFrame or if left_on/right_on parameters are invalid.
         Exception: Catches and prints any other errors during processing or saving.
     """
     try:
@@ -64,15 +64,15 @@ def manual_validator(step_name: str,
             if missing_right:
                 raise ValueError(f"Columns {missing_right} not found in cleaned_dataframe.")
 
-        if 'RowID' not in raw_dataframe.columns or 'RowID' not in cleaned_dataframe.columns:
-            raise ValueError("Both DataFrames must contain a 'RowID' column.")
+        if 'ID' not in raw_dataframe.columns or 'ID' not in cleaned_dataframe.columns:
+            raise ValueError("Both DataFrames must contain a 'ID' column.")
 
-        # Ensure 'RowID' is set as the index for both DataFrames
+        # Ensure 'ID' is set as the index for both DataFrames
         # Using .copy() to avoid modifying the original DataFrames
-        df1_indexed = raw_dataframe.set_index('RowID').copy()
-        df2_indexed = cleaned_dataframe.set_index('RowID').copy()
+        df1_indexed = raw_dataframe.set_index('ID').copy()
+        df2_indexed = cleaned_dataframe.set_index('ID').copy()
 
-        # Align the DataFrames based on their index ('RowID').
+        # Align the DataFrames based on their index ('ID').
         # 'inner' join ensures we only compare rows present in both DataFrames.
         # axis=0 specifies alignment along the index.
         df1_aligned, df2_aligned = df1_indexed.align(df2_indexed, join='inner', axis=0)
@@ -88,7 +88,7 @@ def manual_validator(step_name: str,
                     # Compare values between corresponding columns
                     diff_mask = df1_aligned[left_col] != df2_aligned[right_col]
                     
-                    # Get the differing row indices (which are the original 'RowID' values)
+                    # Get the differing row indices (which are the original 'ID' values)
                     differing_row_ids = df1_aligned[diff_mask].index
                     
                     # Append differences to the list with both column names
@@ -118,7 +118,7 @@ def manual_validator(step_name: str,
                 # Compare the columns from the aligned DataFrames
                 diff_mask = df1_aligned[column] != df2_aligned[column]
                 
-                # Get the differing row indices (which are the original 'RowID' values)
+                # Get the differing row indices (which are the original 'ID' values)
                 differing_row_ids = df1_aligned[diff_mask].index
                 
                 # Append differences to the list
