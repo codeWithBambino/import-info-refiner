@@ -345,10 +345,10 @@ def standardize_data(
             log_message(
                 folder=folder,
                 raw_manifest_filename=raw_manifest_filename,
-                log_string=f"No non-empty values to standardize for column '{column}'. Dropping column.",
+                log_string=f"No non-empty values to standardize for column '{column}'. Skipping column.",
                 level="info",
             )
-            dataframe.drop(columns=[column], inplace=True)
+            dataframe.drop(columns=[pre_col], inplace=True)  # Only drop the pre_cleaned column
             continue
 
         # 3) Create batches of size DATA_CHUNK_SIZE
@@ -456,11 +456,10 @@ def standardize_data(
         )
 
         # 7) Build cleaned column by mapping pre_cleaned → final; fallback to pre_cleaned
-
         if city_flag:
             cleaned_col = f"{column}_city"
         else:
-            cleaned_col = f"cleaned_{column}"
+            cleaned_col = f"Refined {column}"
 
         # Normalize mapping keys and DataFrame column values
         final_mapping = {k.strip(): v for k, v in final_mapping.items()}
@@ -486,23 +485,31 @@ def standardize_data(
             level="info",
         )
 
-        # 8) Drop old columns & rename
-        dataframe.drop(columns=[column, pre_col], inplace=True)
+        # 8) Drop pre_cleaned column only & rename cleaned column
+        dataframe.drop(columns=[pre_col], inplace=True)  # Only drop pre_cleaned column
         if city_flag:
             # Remove "Address" and create suffix column
             base_name = column.replace("Address", "").strip().lower()
             new_col = f"{base_name.capitalize()} City"
             dataframe.rename(columns={cleaned_col: new_col}, inplace=True)
+            log_message(
+                folder=folder,
+                raw_manifest_filename=raw_manifest_filename,
+                log_string=(
+                    f"Dropped '{pre_col}', renamed '{cleaned_col}' to '{new_col}'. Original '{column}' preserved."
+                ),
+                level="info",
+            )
         else:
-            dataframe.rename(columns={cleaned_col: column}, inplace=True)
-        log_message(
-            folder=folder,
-            raw_manifest_filename=raw_manifest_filename,
-            log_string=(
-                f"Dropped original column '{column}' and '{pre_col}', renamed '{cleaned_col}' to '{column}'."
-            ),
-            level="info",
-        )
+            # For non-city flag, keep the "Refined {column}" name
+            log_message(
+                folder=folder,
+                raw_manifest_filename=raw_manifest_filename,
+                log_string=(
+                    f"Dropped '{pre_col}', kept '{cleaned_col}' as refined version. Original '{column}' preserved."
+                ),
+                level="info",
+            )
     
     log_message(
         folder=folder,
